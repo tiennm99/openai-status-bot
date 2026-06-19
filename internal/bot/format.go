@@ -2,35 +2,44 @@ package bot
 
 import (
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
+	"time"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
 	"github.com/tiennm99/openai-status-bot/internal/poller"
 )
 
-const helpText = `OpenAI Status Bot
+const statusURL = "https://status.openai.com/"
+
+const helpText = `<b>OpenAI Status Bot</b>
 
 /start - subscribe this chat or topic
 /stop - unsubscribe this chat or topic
-/status - show current OpenAI status
+/status [component] - show current OpenAI status
 /components - show all component statuses
+/subscribe &lt;incident|component|all&gt; - set notification types
+/subscribe component &lt;name|all&gt; - filter component updates
 /history [count] - show recent incidents, default 5, max 10
+/uptime - show component health overview
+/info - show chat and subscription details
 /help - show this help`
 
 func formatStatus(summary openai.Summary) string {
 	lines := []string{
-		"OpenAI status",
+		"<b>OpenAI Status</b>",
 		"",
-		fmt.Sprintf("Overall: %s", summary.Status.Description),
+		fmt.Sprintf("Overall: <code>%s</code>", escape(summary.Status.Description)),
 	}
 
+	duplicates := duplicateComponentNames(summary.Components)
 	degraded := make([]string, 0)
 	for _, component := range summary.Components {
 		if component.Group || component.Status == "operational" {
 			continue
 		}
-		degraded = append(degraded, fmt.Sprintf("- %s: %s", component.Name, poller.StatusLabel(component.Status)))
+		degraded = append(degraded, fmt.Sprintf("- %s: <code>%s</code>", escape(componentLabel(component, duplicates[component.Name])), escape(poller.StatusLabel(component.Status))))
 	}
 
 	if len(degraded) == 0 {
@@ -39,18 +48,29 @@ func formatStatus(summary openai.Summary) string {
 		lines = append(lines, "", "Affected components:")
 		lines = append(lines, degraded...)
 	}
-	lines = append(lines, "", "https://status.openai.com/")
+	lines = append(lines, "", fmt.Sprintf("<a href=\"%s\">View full status page</a>", statusURL))
 
 	return strings.Join(lines, "\n")
 }
 
+func formatComponentStatus(component openai.Component, duplicate bool) string {
+	return fmt.Sprintf(
+		"<b>%s</b>\n\nStatus: <code>%s</code>\nLast change: %s UTC\n\n<a href=\"%s\">View full status page</a>",
+		escape(componentLabel(component, duplicate)),
+		escape(poller.StatusLabel(component.Status)),
+		escape(formatTime(component.UpdatedAt)),
+		statusURL,
+	)
+}
+
 func formatComponents(summary openai.Summary) string {
-	lines := []string{"OpenAI components", ""}
+	lines := []string{"<b>OpenAI Components</b>", ""}
+	duplicates := duplicateComponentNames(summary.Components)
 	for _, component := range summary.Components {
 		if component.Group {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- %s: %s", component.Name, poller.StatusLabel(component.Status)))
+		lines = append(lines, fmt.Sprintf("- %s: <code>%s</code>", escape(componentLabel(component, duplicates[component.Name])), escape(poller.StatusLabel(component.Status))))
 	}
 	return truncateMessage(strings.Join(lines, "\n"))
 }
@@ -63,17 +83,46 @@ func formatHistory(incidents []openai.Incident, count int) string {
 		count = len(incidents)
 	}
 
-	lines := []string{"Recent OpenAI incidents", ""}
+	lines := []string{"<b>Recent OpenAI Incidents</b>", ""}
 	for i := 0; i < count; i++ {
 		incident := incidents[i]
-		lines = append(lines, fmt.Sprintf(
-			"%d. %s\n   Status: %s | Impact: %s",
+		link := incident.Shortlink
+		if link == "" && incident.ID != "" {
+			link = statusURL + "incidents/" + incident.ID
+		}
+		entry := fmt.Sprintf(
+			"%d. <b>[%s]</b> %s\n   Created: %s UTC\n   Status: <code>%s</code>",
 			i+1,
-			incident.Name,
-			poller.StatusLabel(incident.Status),
-			poller.StatusLabel(incident.Impact),
+			escape(strings.ToUpper(emptyDefault(incident.Impact, "unknown"))),
+			escape(incident.Name),
+			escape(formatDate(incident.CreatedAt)),
+			escape(poller.StatusLabel(incident.Status)),
+		)
+		if link != "" {
+			entry += fmt.Sprintf("\n   <a href=\"%s\">Details</a>", escapeAttr(link))
+		}
+		lines = append(lines, entry)
+	}
+	lines = append(lines, "", fmt.Sprintf("<a href=\"%shistory\">View full history</a>", statusURL))
+	return truncateMessage(strings.Join(lines, "\n\n"))
+}
+
+func formatUptime(summary openai.Summary) string {
+	lines := []string{"<b>OpenAI Component Health</b>", ""}
+	duplicates := duplicateComponentNames(summary.Components)
+	for _, component := range summary.Components {
+		if component.Group {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf(
+			"%s\n   Status: <code>%s</code>\n   Last change: %s UTC",
+			escape(componentLabel(component, duplicates[component.Name])),
+			escape(poller.StatusLabel(component.Status)),
+			escape(formatTime(component.UpdatedAt)),
 		))
 	}
+	lines = append(lines, "", "Uptime percentage is not available from the public Statuspage API.")
+	lines = append(lines, fmt.Sprintf("<a href=\"%s\">View full status page</a>", statusURL))
 	return truncateMessage(strings.Join(lines, "\n"))
 }
 
@@ -95,22 +144,42 @@ func parseHistoryCount(fields []string) int {
 	return count
 }
 
-func normalizeCommand(text string) (string, []string) {
-	fields := strings.Fields(strings.TrimSpace(text))
-	if len(fields) == 0 {
-		return "", nil
-	}
-	command := strings.ToLower(fields[0])
-	if at := strings.Index(command, "@"); at >= 0 {
-		command = command[:at]
-	}
-	return command, fields
-}
-
 func truncateMessage(value string) string {
 	const telegramLimit = 3900
-	if len(value) <= telegramLimit {
+	runes := []rune(value)
+	if len(runes) <= telegramLimit {
 		return value
 	}
-	return strings.TrimSpace(value[:telegramLimit-3]) + "..."
+	return strings.TrimSpace(string(runes[:telegramLimit-3])) + "..."
+}
+
+func formatDate(value string) string {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return emptyDefault(value, "unknown")
+	}
+	return parsed.UTC().Format("Jan 2, 2006")
+}
+
+func formatTime(value string) string {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return emptyDefault(value, "unknown")
+	}
+	return parsed.UTC().Format("Jan 2, 2006 15:04")
+}
+
+func emptyDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func escape(value string) string {
+	return html.EscapeString(value)
+}
+
+func escapeAttr(value string) string {
+	return html.EscapeString(value)
 }

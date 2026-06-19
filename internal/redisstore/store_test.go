@@ -30,3 +30,17 @@ func TestParseSubscriberKeyRejectsInvalidValue(t *testing.T) {
 		t.Fatal("expected invalid key error")
 	}
 }
+
+func TestSubscriberAcceptsComponentIDAndLegacyNameFilters(t *testing.T) {
+	sub := NewSubscriber(12345, nil)
+	sub.Components = []string{"component-id", "Legacy API Name"}
+	if !sub.Accepts(SubscriptionTypeComponent, "component-id", "API") {
+		t.Fatal("expected component ID filter to match")
+	}
+	if !sub.Accepts(SubscriptionTypeComponent, "other-id", "legacy api name") {
+		t.Fatal("expected legacy component name filter to match")
+	}
+	if sub.Accepts(SubscriptionTypeComponent, "other-id", "Other") {
+		t.Fatal("unexpected component filter match")
+	}
+}

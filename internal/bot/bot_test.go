@@ -1,0 +1,155 @@
+package bot
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"testing"
+
+	openai "github.com/tiennm99/openai-status-bot/internal/openai"
+	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/telegram"
+)
+
+type fakeTelegramClient struct {
+	replies []string
+}
+
+func (f *fakeTelegramClient) GetUpdates(context.Context, int64, int) ([]telegram.Update, error) {
+	return nil, nil
+}
+
+func (f *fakeTelegramClient) SendText(_ context.Context, _ int64, _ *int, text string) error {
+	f.replies = append(f.replies, text)
+	return nil
+}
+
+type fakeBotStatusClient struct {
+	summary openai.Summary
+}
+
+func (f fakeBotStatusClient) FetchSummary(context.Context) (openai.Summary, error) {
+	return f.summary, nil
+}
+
+func (f fakeBotStatusClient) FetchIncidents(context.Context) (openai.IncidentsResponse, error) {
+	return openai.IncidentsResponse{}, nil
+}
+
+type fakeBotStore struct {
+	sub        redisstore.Subscriber
+	subscribed bool
+	types      []string
+	components []string
+}
+
+func (f *fakeBotStore) AddSubscriber(_ context.Context, sub redisstore.Subscriber) error {
+	f.sub = sub
+	f.subscribed = true
+	f.types = redisstore.DefaultSubscriptionTypes()
+	return nil
+}
+
+func (f *fakeBotStore) GetSubscriber(context.Context, redisstore.Subscriber) (redisstore.Subscriber, bool, error) {
+	if !f.subscribed {
+		return redisstore.Subscriber{}, false, nil
+	}
+	sub := f.sub
+	sub.Types = append([]string{}, f.types...)
+	sub.Components = append([]string{}, f.components...)
+	return sub, true, nil
+}
+
+func (f *fakeBotStore) RemoveSubscriber(context.Context, redisstore.Subscriber) error {
+	f.subscribed = false
+	return nil
+}
+
+func (f *fakeBotStore) SaveTelegramOffset(context.Context, int64) error { return nil }
+func (f *fakeBotStore) TelegramOffset(context.Context) (int64, error)   { return 0, nil }
+
+func (f *fakeBotStore) UpdateSubscriberComponents(_ context.Context, _ redisstore.Subscriber, components []string) (bool, error) {
+	if !f.subscribed {
+		return false, nil
+	}
+	f.components = append([]string{}, components...)
+	return true, nil
+}
+
+func (f *fakeBotStore) UpdateSubscriberTypes(_ context.Context, _ redisstore.Subscriber, types []string) (bool, error) {
+	if !f.subscribed {
+		return false, nil
+	}
+	f.types = append([]string{}, types...)
+	return true, nil
+}
+
+func TestSubscribeComponentStoresComponentID(t *testing.T) {
+	bot, store, tg := newTestBot([]openai.Component{{ID: "c-api", Name: "API", Status: "operational"}})
+	store.subscribed = true
+	store.sub = redisstore.NewSubscriber(123, nil)
+	store.types = []string{redisstore.SubscriptionTypeIncident}
+
+	bot.handleMessage(context.Background(), messageText("/subscribe component api"))
+
+	if len(store.components) != 1 || store.components[0] != "c-api" {
+		t.Fatalf("components = %v, want [c-api]", store.components)
+	}
+	if !containsComponent(store.types, redisstore.SubscriptionTypeComponent) {
+		t.Fatalf("types = %v, want component enabled", store.types)
+	}
+	if len(tg.replies) != 1 || !strings.Contains(tg.replies[0], "Subscribed to component") {
+		t.Fatalf("reply = %v", tg.replies)
+	}
+}
+
+func TestSubscribeComponentAllEnablesComponentType(t *testing.T) {
+	bot, store, _ := newTestBot(nil)
+	store.subscribed = true
+	store.sub = redisstore.NewSubscriber(123, nil)
+	store.types = []string{redisstore.SubscriptionTypeIncident}
+	store.components = []string{"c-api"}
+
+	bot.handleMessage(context.Background(), messageText("/subscribe component all"))
+
+	if len(store.components) != 0 {
+		t.Fatalf("components = %v, want cleared", store.components)
+	}
+	if !containsComponent(store.types, redisstore.SubscriptionTypeComponent) {
+		t.Fatalf("types = %v, want component enabled", store.types)
+	}
+}
+
+func TestStatusAmbiguousComponentNameRequiresID(t *testing.T) {
+	bot, _, tg := newTestBot([]openai.Component{
+		{ID: "login-a", Name: "Login", Status: "operational"},
+		{ID: "login-b", Name: "Login", Status: "operational"},
+	})
+
+	bot.handleMessage(context.Background(), messageText("/status Login"))
+
+	if len(tg.replies) != 1 || !strings.Contains(tg.replies[0], "ambiguous") || !strings.Contains(tg.replies[0], "login-a") {
+		t.Fatalf("reply = %v", tg.replies)
+	}
+}
+
+func TestCommandForOtherBotIsIgnored(t *testing.T) {
+	bot, _, tg := newTestBot(nil)
+
+	bot.handleMessage(context.Background(), messageText("/start@OtherBot"))
+
+	if len(tg.replies) != 0 {
+		t.Fatalf("replies = %v, want none", tg.replies)
+	}
+}
+
+func newTestBot(components []openai.Component) (*Bot, *fakeBotStore, *fakeTelegramClient) {
+	tg := &fakeTelegramClient{}
+	store := &fakeBotStore{}
+	statusClient := fakeBotStatusClient{summary: openai.Summary{Components: components}}
+	return New(tg, statusClient, store, slog.Default(), "OpenAIStatusBot"), store, tg
+}
+
+func messageText(text string) telegram.Message {
+	return telegram.Message{Text: text, Chat: telegram.Chat{ID: 123}}
+}

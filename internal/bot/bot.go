@@ -23,7 +23,12 @@ type StatusClient interface {
 
 type Store interface {
 	AddSubscriber(ctx context.Context, sub redisstore.Subscriber) error
+	GetSubscriber(ctx context.Context, sub redisstore.Subscriber) (redisstore.Subscriber, bool, error)
 	RemoveSubscriber(ctx context.Context, sub redisstore.Subscriber) error
+	SaveTelegramOffset(ctx context.Context, offset int64) error
+	TelegramOffset(ctx context.Context) (int64, error)
+	UpdateSubscriberComponents(ctx context.Context, sub redisstore.Subscriber, components []string) (bool, error)
+	UpdateSubscriberTypes(ctx context.Context, sub redisstore.Subscriber, types []string) (bool, error)
 }
 
 type Bot struct {
@@ -31,19 +36,28 @@ type Bot struct {
 	statusClient   StatusClient
 	store          Store
 	logger         *slog.Logger
+	username       string
 }
 
-func New(telegramClient TelegramClient, statusClient StatusClient, store Store, logger *slog.Logger) *Bot {
+func New(telegramClient TelegramClient, statusClient StatusClient, store Store, logger *slog.Logger, username ...string) *Bot {
+	botUsername := ""
+	if len(username) > 0 {
+		botUsername = username[0]
+	}
 	return &Bot{
 		telegramClient: telegramClient,
 		statusClient:   statusClient,
 		store:          store,
 		logger:         logger,
+		username:       botUsername,
 	}
 }
 
 func (b *Bot) Run(ctx context.Context) error {
-	var offset int64
+	offset, err := b.store.TelegramOffset(ctx)
+	if err != nil {
+		b.logger.Warn("load telegram offset", "error", err)
+	}
 
 	for {
 		select {
@@ -63,11 +77,16 @@ func (b *Bot) Run(ctx context.Context) error {
 		}
 
 		for _, update := range updates {
-			offset = update.UpdateID + 1
-			if update.Message == nil {
+			if update.UpdateID < offset {
 				continue
 			}
-			b.handleMessage(ctx, *update.Message)
+			if update.Message != nil {
+				b.handleMessage(ctx, *update.Message)
+			}
+			offset = update.UpdateID + 1
+			if err := b.store.SaveTelegramOffset(ctx, offset); err != nil {
+				b.logger.Warn("save telegram offset", "offset", offset, "error", err)
+			}
 		}
 	}
 }
@@ -77,18 +96,26 @@ func (b *Bot) handleMessage(ctx context.Context, message telegram.Message) {
 		return
 	}
 
-	command, fields := normalizeCommand(message.Text)
+	command, fields := normalizeCommand(message.Text, b.username)
 	switch command {
+	case "":
+		return
 	case "/start":
 		b.subscribe(ctx, message)
 	case "/stop":
 		b.unsubscribe(ctx, message)
 	case "/status":
-		b.replyStatus(ctx, message)
+		b.replyStatus(ctx, message, fields)
 	case "/components":
 		b.replyComponents(ctx, message)
+	case "/subscribe":
+		b.replySubscribe(ctx, message, fields)
 	case "/history":
 		b.replyHistory(ctx, message, parseHistoryCount(fields))
+	case "/uptime":
+		b.replyUptime(ctx, message)
+	case "/info":
+		b.replyInfo(ctx, message)
 	case "/help":
 		b.reply(ctx, message, helpText)
 	default:
@@ -103,7 +130,7 @@ func (b *Bot) subscribe(ctx context.Context, message telegram.Message) {
 		b.reply(ctx, message, "Could not subscribe right now.")
 		return
 	}
-	b.reply(ctx, message, "Subscribed to OpenAI status updates.")
+	b.reply(ctx, message, "Subscribed to OpenAI status updates (incidents + components). Use /subscribe to change preferences.")
 }
 
 func (b *Bot) unsubscribe(ctx context.Context, message telegram.Message) {
@@ -113,41 +140,5 @@ func (b *Bot) unsubscribe(ctx context.Context, message telegram.Message) {
 		b.reply(ctx, message, "Could not unsubscribe right now.")
 		return
 	}
-	b.reply(ctx, message, "Unsubscribed from OpenAI status updates.")
-}
-
-func (b *Bot) replyStatus(ctx context.Context, message telegram.Message) {
-	summary, err := b.statusClient.FetchSummary(ctx)
-	if err != nil {
-		b.logger.Error("fetch status", "error", err)
-		b.reply(ctx, message, "Could not fetch OpenAI status right now.")
-		return
-	}
-	b.reply(ctx, message, formatStatus(summary))
-}
-
-func (b *Bot) replyComponents(ctx context.Context, message telegram.Message) {
-	summary, err := b.statusClient.FetchSummary(ctx)
-	if err != nil {
-		b.logger.Error("fetch components", "error", err)
-		b.reply(ctx, message, "Could not fetch OpenAI components right now.")
-		return
-	}
-	b.reply(ctx, message, formatComponents(summary))
-}
-
-func (b *Bot) replyHistory(ctx context.Context, message telegram.Message, count int) {
-	incidents, err := b.statusClient.FetchIncidents(ctx)
-	if err != nil {
-		b.logger.Error("fetch incidents", "error", err)
-		b.reply(ctx, message, "Could not fetch OpenAI incident history right now.")
-		return
-	}
-	b.reply(ctx, message, formatHistory(incidents.Incidents, count))
-}
-
-func (b *Bot) reply(ctx context.Context, message telegram.Message, text string) {
-	if err := b.telegramClient.SendText(ctx, message.Chat.ID, message.MessageThreadID, text); err != nil {
-		b.logger.Warn("send telegram reply", "chat_id", message.Chat.ID, "error", err)
-	}
+	b.reply(ctx, message, "Unsubscribed from OpenAI status updates. Use /start to resubscribe.")
 }

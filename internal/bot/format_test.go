@@ -2,13 +2,20 @@ package bot
 
 import "testing"
 
-func TestNormalizeCommandStripsBotUsername(t *testing.T) {
-	command, fields := normalizeCommand("/history@OpenAIStatusBot 10")
+func TestNormalizeCommandStripsOwnBotUsername(t *testing.T) {
+	command, fields := normalizeCommand("/history@OpenAIStatusBot 10", "OpenAIStatusBot")
 	if command != "/history" {
 		t.Fatalf("command = %q, want /history", command)
 	}
 	if len(fields) != 2 || fields[1] != "10" {
 		t.Fatalf("fields = %#v", fields)
+	}
+}
+
+func TestNormalizeCommandIgnoresOtherBotUsername(t *testing.T) {
+	command, _ := normalizeCommand("/start@OtherBot", "OpenAIStatusBot")
+	if command != "" {
+		t.Fatalf("command = %q, want empty", command)
 	}
 }
 

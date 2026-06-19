@@ -7,8 +7,10 @@ Telegram bot that watches [OpenAI Status](https://status.openai.com/) every minu
 - Checks OpenAI status on a configurable interval, default `1m`
 - Notifies subscribers about new incident updates
 - Notifies subscribers when component status changes
-- Uses Redis for subscribers, component status checkpoints, and seen incident updates
+- Supports incident-only, component-only, and component-filtered subscriptions
+- Uses Redis for subscribers, delivery state, component checkpoints, and seen incident update versions
 - Supports Telegram supergroup topics via `message_thread_id`
+- Clears an existing Telegram webhook before long polling, for migration from webhook deployments
 - Includes Docker Compose for local Redis + bot runtime
 
 ## Bot Commands
@@ -17,9 +19,13 @@ Telegram bot that watches [OpenAI Status](https://status.openai.com/) every minu
 |---------|-------------|
 | `/start` | Subscribe current chat or topic |
 | `/stop` | Unsubscribe current chat or topic |
-| `/status` | Show current OpenAI status |
+| `/status [component]` | Show current OpenAI status, optionally for one component |
 | `/components` | Show all OpenAI component statuses |
+| `/subscribe <incident|component|all>` | Set notification types |
+| `/subscribe component <name|id|all>` | Filter component notifications or clear the filter |
 | `/history [count]` | Show recent incidents, default 5, max 10 |
+| `/uptime` | Show component health overview |
+| `/info` | Show chat ID and subscription settings |
 | `/help` | Show command help |
 
 ## Quick Start
@@ -53,3 +59,5 @@ go run ./cmd/openai-status-bot
 ## Notes
 
 The first successful poll seeds Redis and does not send historical incidents. Notifications start from later changes.
+
+Incident update dedupe tracks the update content/version, so edited Statuspage updates can notify again. Delivery is checkpointed after successful fan-out; retryable Telegram failures may be retried on a later poll without advancing the global checkpoint.

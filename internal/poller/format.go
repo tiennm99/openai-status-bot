@@ -2,18 +2,18 @@ package poller
 
 import (
 	"fmt"
+	"html"
 	"strings"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
 )
 
-func FormatComponentChange(component openai.Component, previousStatus string) string {
+func FormatComponentChange(component openai.Component, previousStatus string, duplicate bool) string {
 	return fmt.Sprintf(
-		"OpenAI component status changed\n\nComponent: %s\nStatus: %s -> %s\n\n%s",
-		component.Name,
-		StatusLabel(previousStatus),
-		StatusLabel(component.Status),
-		"https://status.openai.com/",
+		"<b>OpenAI component update</b>\n\nComponent: <b>%s</b>\nStatus: <code>%s</code> -&gt; <code>%s</code>\n\n<a href=\"https://status.openai.com/\">View full status page</a>",
+		escape(componentLabel(component, duplicate)),
+		escape(StatusLabel(previousStatus)),
+		escape(StatusLabel(component.Status)),
 	)
 }
 
@@ -23,13 +23,18 @@ func FormatIncidentUpdate(incident openai.Incident, update openai.IncidentUpdate
 		body = "No update message provided."
 	}
 
+	link := incident.Shortlink
+	if link == "" && incident.ID != "" {
+		link = "https://status.openai.com/incidents/" + incident.ID
+	}
+
 	return fmt.Sprintf(
-		"OpenAI incident update\n\n%s\nStatus: %s\nImpact: %s\n\n%s\n\n%s",
-		incident.Name,
-		StatusLabel(update.Status),
-		StatusLabel(incident.Impact),
-		truncate(body, 2600),
-		"https://status.openai.com/incidents/"+incident.ID,
+		"<b>OpenAI incident update</b>\n\n<b>%s</b>\nStatus: <code>%s</code>\nImpact: <code>%s</code>\n\n%s\n\n<a href=\"%s\">View incident</a>",
+		escape(incident.Name),
+		escape(StatusLabel(update.Status)),
+		escape(StatusLabel(incident.Impact)),
+		escape(truncate(body, 2600)),
+		escape(link),
 	)
 }
 
@@ -40,13 +45,13 @@ func StatusLabel(value string) string {
 	case "operational":
 		return "Operational"
 	case "degraded_performance":
-		return "Degraded performance"
+		return "Degraded Performance"
 	case "partial_outage":
-		return "Partial outage"
+		return "Partial Outage"
 	case "major_outage":
-		return "Major outage"
+		return "Major Outage"
 	case "under_maintenance":
-		return "Under maintenance"
+		return "Under Maintenance"
 	case "none":
 		return "None"
 	case "minor":
@@ -55,6 +60,8 @@ func StatusLabel(value string) string {
 		return "Major"
 	case "critical":
 		return "Critical"
+	case "maintenance":
+		return "Maintenance"
 	case "investigating":
 		return "Investigating"
 	case "identified":
@@ -68,12 +75,46 @@ func StatusLabel(value string) string {
 	}
 }
 
+func duplicateComponentNames(components []openai.Component) map[string]bool {
+	counts := map[string]int{}
+	for _, component := range components {
+		if component.Group {
+			continue
+		}
+		counts[component.Name]++
+	}
+	duplicates := map[string]bool{}
+	for name, count := range counts {
+		duplicates[name] = count > 1
+	}
+	return duplicates
+}
+
+func componentLabel(component openai.Component, duplicate bool) string {
+	if !duplicate || component.ID == "" {
+		return component.Name
+	}
+	return fmt.Sprintf("%s (ID: %s)", component.Name, shortID(component.ID))
+}
+
+func shortID(value string) string {
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
+}
+
 func truncate(value string, limit int) string {
-	if len(value) <= limit {
+	runes := []rune(value)
+	if len(runes) <= limit {
 		return value
 	}
 	if limit <= 3 {
-		return value[:limit]
+		return string(runes[:limit])
 	}
-	return strings.TrimSpace(value[:limit-3]) + "..."
+	return strings.TrimSpace(string(runes[:limit-3])) + "..."
+}
+
+func escape(value string) string {
+	return html.EscapeString(value)
 }

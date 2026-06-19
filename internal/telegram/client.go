@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tiennm99/openai-status-bot/internal/redisstore"
@@ -16,6 +18,42 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type APIError struct {
+	StatusCode  int
+	Description string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("telegram API %d: %s", e.StatusCode, e.Description)
+}
+
+func IsTerminalSendError(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.StatusCode == http.StatusForbidden {
+		return true
+	}
+	if apiErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	description := strings.ToLower(apiErr.Description)
+	terminalPhrases := []string{
+		"chat not found",
+		"message thread not found",
+		"message thread is closed",
+		"bot was kicked",
+		"bot is not a member",
+	}
+	for _, phrase := range terminalPhrases {
+		if strings.Contains(description, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 func NewClient(token string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: "https://api.telegram.org/bot" + token,
@@ -23,6 +61,20 @@ func NewClient(token string, timeout time.Duration) *Client {
 			Timeout: timeout + 60*time.Second,
 		},
 	}
+}
+
+func (c *Client) DeleteWebhook(ctx context.Context) error {
+	payload := map[string]any{"drop_pending_updates": false}
+	var result json.RawMessage
+	return c.postJSON(ctx, "/deleteWebhook", payload, &result)
+}
+
+func (c *Client) GetMe(ctx context.Context) (User, error) {
+	var user User
+	if err := c.postJSON(ctx, "/getMe", map[string]any{}, &user); err != nil {
+		return User{}, err
+	}
+	return user, nil
 }
 
 func (c *Client) GetUpdates(ctx context.Context, offset int64, timeoutSeconds int) ([]Update, error) {
@@ -45,8 +97,10 @@ func (c *Client) SendMessage(ctx context.Context, sub redisstore.Subscriber, tex
 
 func (c *Client) SendText(ctx context.Context, chatID int64, threadID *int, text string) error {
 	payload := map[string]any{
-		"chat_id": chatID,
-		"text":    text,
+		"chat_id":                  chatID,
+		"text":                     text,
+		"parse_mode":               "HTML",
+		"disable_web_page_preview": true,
 	}
 	if threadID != nil {
 		payload["message_thread_id"] = *threadID
@@ -83,7 +137,7 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any, target 
 		return fmt.Errorf("decode telegram response: %w", err)
 	}
 	if !envelope.OK {
-		return fmt.Errorf("telegram API %s: %s", res.Status, envelope.Description)
+		return &APIError{StatusCode: res.StatusCode, Description: envelope.Description}
 	}
 	if target != nil {
 		if err := json.Unmarshal(envelope.Result, target); err != nil {

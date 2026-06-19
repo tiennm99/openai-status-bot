@@ -10,8 +10,8 @@ import (
 func TestStatusLabel(t *testing.T) {
 	tests := map[string]string{
 		"operational":          "Operational",
-		"degraded_performance": "Degraded performance",
-		"partial_outage":       "Partial outage",
+		"degraded_performance": "Degraded Performance",
+		"partial_outage":       "Partial Outage",
 		"minor":                "Minor",
 		"":                     "Unknown",
 	}

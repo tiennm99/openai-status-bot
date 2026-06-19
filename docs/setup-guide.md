@@ -37,4 +37,4 @@ go test ./...
 go build ./cmd/openai-status-bot
 ```
 
-Then send `/start` to the Telegram bot and run `/status`.
+Then send `/start` to the Telegram bot and run `/status`. If the same token was previously used by a webhook deployment, startup clears that webhook before long polling begins.

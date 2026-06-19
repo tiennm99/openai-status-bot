@@ -45,9 +45,20 @@ func main() {
 	store := redisstore.New(redisClient)
 	statusClient := openai.NewClient(cfg.OpenAIStatusBaseURL, cfg.HTTPTimeout)
 	telegramClient := telegram.NewClient(cfg.TelegramBotToken, cfg.HTTPTimeout)
+	if err := telegramClient.DeleteWebhook(ctx); err != nil {
+		logger.Error("delete telegram webhook", "error", err)
+		os.Exit(1)
+	}
+
+	botUsername := ""
+	if me, err := telegramClient.GetMe(ctx); err != nil {
+		logger.Warn("get telegram bot profile", "error", err)
+	} else {
+		botUsername = me.Username
+	}
 
 	statusPoller := poller.NewRunner(statusClient, store, telegramClient, cfg.PollInterval, logger)
-	commandBot := bot.New(telegramClient, statusClient, store, logger)
+	commandBot := bot.New(telegramClient, statusClient, store, logger, botUsername)
 
 	go statusPoller.Run(ctx)
 

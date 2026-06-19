@@ -20,6 +20,7 @@ type Component struct {
 	UpdatedAt string `json:"updated_at"`
 	Position  int    `json:"position"`
 	PageID    string `json:"page_id"`
+	GroupID   string `json:"group_id"`
 	Group     bool   `json:"group"`
 }
 
@@ -38,6 +39,7 @@ type Incident struct {
 	UpdatedAt       string           `json:"updated_at"`
 	ResolvedAt      string           `json:"resolved_at"`
 	Impact          string           `json:"impact"`
+	Shortlink       string           `json:"shortlink"`
 	PageID          string           `json:"page_id"`
 	IncidentUpdates []IncidentUpdate `json:"incident_updates"`
 }
