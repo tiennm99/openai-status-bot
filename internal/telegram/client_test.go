@@ -3,9 +3,11 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestDeleteWebhookKeepsPendingUpdates(t *testing.T) {
@@ -58,16 +60,53 @@ func TestSendTextUsesHTMLAndDisablesPreview(t *testing.T) {
 }
 
 func TestIsTerminalSendError(t *testing.T) {
-	terminal := &APIError{StatusCode: 403, Description: "Forbidden: bot was blocked by the user"}
+	terminal := &APIError{StatusCode: 200, ErrorCode: 403, Description: "Forbidden: bot was blocked by the user"}
 	if !IsTerminalSendError(terminal) {
 		t.Fatal("403 blocked should be terminal")
 	}
-	chatNotFound := &APIError{StatusCode: 400, Description: "Bad Request: chat not found"}
+	chatNotFound := &APIError{StatusCode: 200, ErrorCode: 400, Description: "Bad Request: chat not found"}
 	if !IsTerminalSendError(chatNotFound) {
 		t.Fatal("chat not found should be terminal")
 	}
-	parseError := &APIError{StatusCode: 400, Description: "Bad Request: can't parse entities"}
+	parseError := &APIError{StatusCode: 200, ErrorCode: 400, Description: "Bad Request: can't parse entities"}
 	if IsTerminalSendError(parseError) {
 		t.Fatal("parse errors should not remove subscribers")
+	}
+	legacyForbidden := &APIError{StatusCode: 403, Description: "Forbidden"}
+	if !IsTerminalSendError(legacyForbidden) {
+		t.Fatal("status-code-only 403 should remain terminal")
+	}
+}
+
+func TestSendTextCapturesTelegramErrorCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":403,"description":"Forbidden: bot was kicked"}`))
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, httpClient: server.Client()}
+	err := client.SendText(context.Background(), 123, nil, "hello")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("SendText error = %v, want APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusOK || apiErr.ErrorCode != http.StatusForbidden {
+		t.Fatalf("APIError = %+v", apiErr)
+	}
+	if !IsTerminalSendError(err) {
+		t.Fatal("telegram error_code 403 should be terminal")
+	}
+}
+
+func TestNewClientUsesConfiguredTimeoutForOrdinaryRequests(t *testing.T) {
+	client := NewClient("token", 10*time.Second)
+	if client.requestTimeout != 10*time.Second {
+		t.Fatalf("requestTimeout = %s, want 10s", client.requestTimeout)
+	}
+	if client.httpClient.Timeout != 0 {
+		t.Fatalf("httpClient.Timeout = %s, want context-scoped timeout", client.httpClient.Timeout)
+	}
+	if got := client.longPollRequestTimeout(50); got != time.Minute {
+		t.Fatalf("longPollRequestTimeout = %s, want 1m", got)
 	}
 }

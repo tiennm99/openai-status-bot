@@ -152,9 +152,11 @@ func (r *Runner) collectIncidentEvents(ctx context.Context, response openai.Inci
 			if err != nil {
 				return nil, nil, err
 			}
-			checkpoints = append(checkpoints, func(ctx context.Context) error {
-				return r.store.MarkIncidentUpdateVersion(ctx, update.ID, version)
-			})
+			if !seen {
+				checkpoints = append(checkpoints, func(ctx context.Context) error {
+					return r.store.MarkIncidentUpdateVersion(ctx, update.ID, version)
+				})
+			}
 			deliveryKey := fmt.Sprintf("incident:%s:%s", update.ID, version)
 			if initialized && !seen {
 				events = append(events, notificationEvent{
@@ -183,7 +185,7 @@ func pendingComponent(event redisstore.PendingComponentEvent) openai.Component {
 }
 
 func IncidentUpdateVersion(update openai.IncidentUpdate) string {
-	parts := []string{update.UpdatedAt, update.Status, update.Body, update.DisplayAt, update.CreatedAt}
+	parts := []string{update.Status, update.Body, update.DisplayAt, update.CreatedAt}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return fmt.Sprintf("%x", sum[:])
 }

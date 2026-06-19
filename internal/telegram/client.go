@@ -14,17 +14,22 @@ import (
 )
 
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL        string
+	httpClient     *http.Client
+	requestTimeout time.Duration
 }
 
 type APIError struct {
 	StatusCode  int
+	ErrorCode   int
 	Description string
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("telegram API %d: %s", e.StatusCode, e.Description)
+	if e.ErrorCode != 0 {
+		return fmt.Sprintf("telegram API error_code %d (HTTP %d): %s", e.ErrorCode, e.StatusCode, e.Description)
+	}
+	return fmt.Sprintf("telegram API HTTP %d: %s", e.StatusCode, e.Description)
 }
 
 func IsTerminalSendError(err error) bool {
@@ -32,10 +37,14 @@ func IsTerminalSendError(err error) bool {
 	if !errors.As(err, &apiErr) {
 		return false
 	}
-	if apiErr.StatusCode == http.StatusForbidden {
+	code := apiErr.ErrorCode
+	if code == 0 {
+		code = apiErr.StatusCode
+	}
+	if code == http.StatusForbidden {
 		return true
 	}
-	if apiErr.StatusCode != http.StatusBadRequest {
+	if code != http.StatusBadRequest {
 		return false
 	}
 	description := strings.ToLower(apiErr.Description)
@@ -56,22 +65,21 @@ func IsTerminalSendError(err error) bool {
 
 func NewClient(token string, timeout time.Duration) *Client {
 	return &Client{
-		baseURL: "https://api.telegram.org/bot" + token,
-		httpClient: &http.Client{
-			Timeout: timeout + 60*time.Second,
-		},
+		baseURL:        "https://api.telegram.org/bot" + token,
+		httpClient:     &http.Client{},
+		requestTimeout: timeout,
 	}
 }
 
 func (c *Client) DeleteWebhook(ctx context.Context) error {
 	payload := map[string]any{"drop_pending_updates": false}
 	var result json.RawMessage
-	return c.postJSON(ctx, "/deleteWebhook", payload, &result)
+	return c.postJSON(ctx, "/deleteWebhook", payload, &result, c.requestTimeout)
 }
 
 func (c *Client) GetMe(ctx context.Context) (User, error) {
 	var user User
-	if err := c.postJSON(ctx, "/getMe", map[string]any{}, &user); err != nil {
+	if err := c.postJSON(ctx, "/getMe", map[string]any{}, &user, c.requestTimeout); err != nil {
 		return User{}, err
 	}
 	return user, nil
@@ -85,7 +93,7 @@ func (c *Client) GetUpdates(ctx context.Context, offset int64, timeoutSeconds in
 	}
 
 	var updates []Update
-	if err := c.postJSON(ctx, "/getUpdates", payload, &updates); err != nil {
+	if err := c.postJSON(ctx, "/getUpdates", payload, &updates, c.longPollRequestTimeout(timeoutSeconds)); err != nil {
 		return nil, err
 	}
 	return updates, nil
@@ -107,22 +115,44 @@ func (c *Client) SendText(ctx context.Context, chatID int64, threadID *int, text
 	}
 
 	var result json.RawMessage
-	return c.postJSON(ctx, "/sendMessage", payload, &result)
+	return c.postJSON(ctx, "/sendMessage", payload, &result, c.requestTimeout)
 }
 
-func (c *Client) postJSON(ctx context.Context, path string, payload any, target any) error {
+func (c *Client) longPollRequestTimeout(timeoutSeconds int) time.Duration {
+	telegramWait := time.Duration(timeoutSeconds) * time.Second
+	if telegramWait < 0 {
+		telegramWait = 0
+	}
+	if c.requestTimeout <= 0 {
+		return telegramWait
+	}
+	return telegramWait + c.requestTimeout
+}
+
+func (c *Client) postJSON(ctx context.Context, path string, payload any, target any, requestTimeout time.Duration) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
+	requestCtx := ctx
+	if requestTimeout > 0 {
+		var cancel context.CancelFunc
+		requestCtx, cancel = context.WithTimeout(ctx, requestTimeout)
+		defer cancel()
+	}
+
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := c.httpClient.Do(req)
+	httpClient := c.httpClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	res, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -132,12 +162,13 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any, target 
 		OK          bool            `json:"ok"`
 		Result      json.RawMessage `json:"result"`
 		Description string          `json:"description"`
+		ErrorCode   int             `json:"error_code"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&envelope); err != nil {
 		return fmt.Errorf("decode telegram response: %w", err)
 	}
 	if !envelope.OK {
-		return &APIError{StatusCode: res.StatusCode, Description: envelope.Description}
+		return &APIError{StatusCode: res.StatusCode, ErrorCode: envelope.ErrorCode, Description: envelope.Description}
 	}
 	if target != nil {
 		if err := json.Unmarshal(envelope.Result, target); err != nil {

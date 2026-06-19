@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+docs/
+plans/
+code-review-report.md
+coverage.out
+*.test
+*.log
+openai-status-bot
+tmp/

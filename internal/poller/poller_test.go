@@ -31,6 +31,7 @@ type fakePollerStore struct {
 	incidentVersions  map[string]string
 	subscribers       []redisstore.Subscriber
 	delivered         map[string]map[string]bool
+	markDeliveredErr  error
 	savedComponents   map[string]string
 	markedVersions    map[string]string
 	pendingComponents map[string]redisstore.PendingComponentEvent
@@ -75,6 +76,9 @@ func (f *fakePollerStore) ListSubscribers(context.Context) ([]redisstore.Subscri
 }
 
 func (f *fakePollerStore) MarkDelivered(_ context.Context, eventKey, subscriberKey string) error {
+	if f.markDeliveredErr != nil {
+		return f.markDeliveredErr
+	}
 	if f.delivered[eventKey] == nil {
 		f.delivered[eventKey] = map[string]bool{}
 	}
@@ -183,7 +187,7 @@ func TestCheckOnceRemovesTerminalSubscriberAndCheckpoints(t *testing.T) {
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
 	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil), redisstore.NewSubscriber(2, nil)}
-	notifier := &fakeNotifier{errors: map[string]error{"2": &telegram.APIError{StatusCode: 403, Description: "Forbidden: bot was blocked by the user"}}}
+	notifier := &fakeNotifier{errors: map[string]error{"2": &telegram.APIError{StatusCode: 200, ErrorCode: 403, Description: "Forbidden: bot was blocked by the user"}}}
 	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
 
 	if err := runner.CheckOnce(context.Background()); err != nil {
@@ -258,6 +262,56 @@ func TestPendingComponentEventSurvivesReturnToPreviousStatus(t *testing.T) {
 	}
 	if got := store.savedComponents["c1"]; got != "operational" {
 		t.Fatalf("component checkpoint = %q, want recovery status", got)
+	}
+}
+
+func TestCheckOnceContinuesWhenMarkDeliveredFailsAfterSend(t *testing.T) {
+	store := newFakePollerStore()
+	store.initialized = true
+	store.componentStatuses["c1"] = "operational"
+	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	store.markDeliveredErr = errors.New("redis write failed")
+	notifier := &fakeNotifier{}
+	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err != nil {
+		t.Fatalf("CheckOnce returned error: %v", err)
+	}
+	if len(notifier.sends) != 1 || notifier.sends[0] != "1" {
+		t.Fatalf("sends = %v, want [1]", notifier.sends)
+	}
+	if got := store.savedComponents["c1"]; got != "degraded_performance" {
+		t.Fatalf("component checkpoint = %q", got)
+	}
+}
+
+func TestIncidentUpdateVersionIgnoresUpdatedAtRefresh(t *testing.T) {
+	base := openai.IncidentUpdate{ID: "u1", Status: "monitoring", Body: "same", DisplayAt: "2026-01-01T00:00:00Z", CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:01:00Z"}
+	refreshed := base
+	refreshed.UpdatedAt = "2026-01-01T00:02:00Z"
+
+	if got, want := IncidentUpdateVersion(refreshed), IncidentUpdateVersion(base); got != want {
+		t.Fatalf("version changed for UpdatedAt-only refresh: got %s, want %s", got, want)
+	}
+}
+
+func TestCheckOnceDoesNotRemarkSeenIncidentVersion(t *testing.T) {
+	update := openai.IncidentUpdate{ID: "u1", Body: "same", UpdatedAt: "2026-01-01T00:00:00Z"}
+	store := newFakePollerStore()
+	store.initialized = true
+	store.incidentVersions["u1"] = IncidentUpdateVersion(update)
+	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	notifier := &fakeNotifier{}
+	runner := NewRunner(fakeStatusClient{incidents: openai.IncidentsResponse{Incidents: []openai.Incident{{ID: "i1", Name: "incident", Impact: "minor", IncidentUpdates: []openai.IncidentUpdate{update}}}}}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err != nil {
+		t.Fatalf("CheckOnce returned error: %v", err)
+	}
+	if len(notifier.sends) != 0 {
+		t.Fatalf("sends = %v, want none", notifier.sends)
+	}
+	if len(store.markedVersions) != 0 {
+		t.Fatalf("markedVersions = %v, want none", store.markedVersions)
 	}
 }
 

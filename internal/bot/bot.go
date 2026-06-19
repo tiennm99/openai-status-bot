@@ -72,7 +72,11 @@ func (b *Bot) Run(ctx context.Context) error {
 				return nil
 			}
 			b.logger.Warn("get telegram updates", "error", err)
-			time.Sleep(3 * time.Second)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(3 * time.Second):
+			}
 			continue
 		}
 

@@ -44,3 +44,38 @@ func TestSubscriberAcceptsComponentIDAndLegacyNameFilters(t *testing.T) {
 		t.Fatal("unexpected component filter match")
 	}
 }
+
+func TestDecodePendingComponentEventBackfillsComponentID(t *testing.T) {
+	event, err := decodePendingComponentEvent("c1", `{"component_name":"API","status":"operational"}`)
+	if err != nil {
+		t.Fatalf("decodePendingComponentEvent returned error: %v", err)
+	}
+	if event.ComponentID != "c1" {
+		t.Fatalf("ComponentID = %q, want c1", event.ComponentID)
+	}
+}
+
+func TestDecodePendingComponentEventRejectsCorruptedPayload(t *testing.T) {
+	if _, err := decodePendingComponentEvent("c1", `{bad json`); err == nil {
+		t.Fatal("expected corrupted pending event error")
+	}
+}
+
+func TestDecodeSubscriberSettingsNormalizesValues(t *testing.T) {
+	settings, err := decodeSubscriberSettings("123", `{"types":["incident","component","incident"],"components":[" api ","API",""]}`)
+	if err != nil {
+		t.Fatalf("decodeSubscriberSettings returned error: %v", err)
+	}
+	if len(settings.Types) != 2 || settings.Types[0] != SubscriptionTypeIncident || settings.Types[1] != SubscriptionTypeComponent {
+		t.Fatalf("Types = %v", settings.Types)
+	}
+	if len(settings.Components) != 1 || settings.Components[0] != "api" {
+		t.Fatalf("Components = %v", settings.Components)
+	}
+}
+
+func TestDecodeSubscriberSettingsRejectsCorruptedPayload(t *testing.T) {
+	if _, err := decodeSubscriberSettings("123", `{bad json`); err == nil {
+		t.Fatal("expected corrupted subscriber settings error")
+	}
+}

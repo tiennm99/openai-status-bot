@@ -39,7 +39,7 @@ func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent,
 		}
 		if event.deliveryKey != "" {
 			if err := r.store.MarkDelivered(ctx, event.deliveryKey, subscriberKey); err != nil {
-				return err
+				r.logger.Warn("mark telegram delivery", "subscriber", subscriberKey, "event", event.deliveryKey, "error", err)
 			}
 		}
 	}

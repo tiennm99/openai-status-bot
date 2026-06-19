@@ -2,12 +2,9 @@ package redisstore
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type Subscriber struct {
@@ -15,11 +12,6 @@ type Subscriber struct {
 	ThreadID   *int
 	Types      []string
 	Components []string
-}
-
-type subscriberSettings struct {
-	Types      []string `json:"types"`
-	Components []string `json:"components"`
 }
 
 func NewSubscriber(chatID int64, threadID *int) Subscriber {
@@ -151,7 +143,10 @@ func (s *Store) UpdateSubscriberComponents(ctx context.Context, sub Subscriber, 
 func (s *Store) loadSubscriber(ctx context.Context, key string) (Subscriber, bool, error) {
 	sub, err := ParseSubscriberKey(key)
 	if err != nil {
-		return Subscriber{}, false, nil
+		if removeErr := s.client.SRem(ctx, subscribersKey, key).Err(); removeErr != nil {
+			return Subscriber{}, false, fmt.Errorf("remove malformed subscriber key %q: %w", key, removeErr)
+		}
+		return Subscriber{}, false, fmt.Errorf("malformed subscriber key %q: %w", key, err)
 	}
 	settings, err := s.loadSubscriberSettings(ctx, key)
 	if err != nil {
@@ -160,41 +155,4 @@ func (s *Store) loadSubscriber(ctx context.Context, key string) (Subscriber, boo
 	sub.Types = settings.Types
 	sub.Components = settings.Components
 	return sub, true, nil
-}
-
-func (s *Store) loadExistingSubscriberSettings(ctx context.Context, key string) (subscriberSettings, bool, error) {
-	exists, err := s.client.SIsMember(ctx, subscribersKey, key).Result()
-	if err != nil || !exists {
-		return subscriberSettings{}, false, err
-	}
-	settings, err := s.loadSubscriberSettings(ctx, key)
-	return settings, true, err
-}
-
-func (s *Store) loadSubscriberSettings(ctx context.Context, key string) (subscriberSettings, error) {
-	value, err := s.client.HGet(ctx, subscriberSettingsKey, key).Result()
-	if err == redis.Nil {
-		return subscriberSettings{Types: DefaultSubscriptionTypes(), Components: []string{}}, nil
-	}
-	if err != nil {
-		return subscriberSettings{}, err
-	}
-
-	var settings subscriberSettings
-	if err := json.Unmarshal([]byte(value), &settings); err != nil {
-		return subscriberSettings{Types: DefaultSubscriptionTypes(), Components: []string{}}, nil
-	}
-	settings.Types = normalizeTypes(settings.Types)
-	settings.Components = normalizeComponents(settings.Components)
-	return settings, nil
-}
-
-func (s *Store) saveSubscriberSettings(ctx context.Context, key string, settings subscriberSettings) error {
-	settings.Types = normalizeTypes(settings.Types)
-	settings.Components = normalizeComponents(settings.Components)
-	payload, err := json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	return s.client.HSet(ctx, subscriberSettingsKey, key, payload).Err()
 }

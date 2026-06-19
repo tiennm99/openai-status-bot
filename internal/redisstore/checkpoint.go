@@ -46,16 +46,24 @@ func (s *Store) PendingComponentEvents(ctx context.Context) (map[string]PendingC
 	}
 	events := make(map[string]PendingComponentEvent, len(values))
 	for componentID, value := range values {
-		var event PendingComponentEvent
-		if err := json.Unmarshal([]byte(value), &event); err != nil {
-			continue
-		}
-		if event.ComponentID == "" {
-			event.ComponentID = componentID
+		event, err := decodePendingComponentEvent(componentID, value)
+		if err != nil {
+			return nil, err
 		}
 		events[componentID] = event
 	}
 	return events, nil
+}
+
+func decodePendingComponentEvent(componentID, value string) (PendingComponentEvent, error) {
+	var event PendingComponentEvent
+	if err := json.Unmarshal([]byte(value), &event); err != nil {
+		return PendingComponentEvent{}, fmt.Errorf("decode pending component event %q: %w", componentID, err)
+	}
+	if event.ComponentID == "" {
+		event.ComponentID = componentID
+	}
+	return event, nil
 }
 
 func (s *Store) SavePendingComponentEvent(ctx context.Context, event PendingComponentEvent) error {
@@ -86,7 +94,7 @@ func (s *Store) HasIncidentUpdateVersion(ctx context.Context, updateID, version 
 	if err != redis.Nil {
 		return false, err
 	}
-	return s.client.SIsMember(ctx, incidentUpdatesKey, updateID).Result()
+	return false, nil
 }
 
 func (s *Store) MarkIncidentUpdateVersion(ctx context.Context, updateID, version string) error {

@@ -2,9 +2,11 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
 	"github.com/tiennm99/openai-status-bot/internal/redisstore"
@@ -12,11 +14,16 @@ import (
 )
 
 type fakeTelegramClient struct {
-	replies []string
+	replies       []string
+	getUpdatesErr error
+	onGetUpdates  func()
 }
 
 func (f *fakeTelegramClient) GetUpdates(context.Context, int64, int) ([]telegram.Update, error) {
-	return nil, nil
+	if f.onGetUpdates != nil {
+		f.onGetUpdates()
+	}
+	return nil, f.getUpdatesErr
 }
 
 func (f *fakeTelegramClient) SendText(_ context.Context, _ int64, _ *int, text string) error {
@@ -140,6 +147,21 @@ func TestCommandForOtherBotIsIgnored(t *testing.T) {
 
 	if len(tg.replies) != 0 {
 		t.Fatalf("replies = %v, want none", tg.replies)
+	}
+}
+
+func TestRunReturnsPromptlyWhenContextCanceledAfterGetUpdatesError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tg := &fakeTelegramClient{getUpdatesErr: errors.New("network"), onGetUpdates: cancel}
+	store := &fakeBotStore{}
+	bot := New(tg, fakeBotStatusClient{}, store, slog.Default(), "OpenAIStatusBot")
+
+	started := time.Now()
+	if err := bot.Run(ctx); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("Run took %s after context cancellation", elapsed)
 	}
 }
 

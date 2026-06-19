@@ -50,11 +50,11 @@ go run ./cmd/openai-status-bot
 | `TELEGRAM_BOT_TOKEN` | required | Telegram bot token from BotFather |
 | `REDIS_ADDR` | `localhost:6379` | Redis address |
 | `REDIS_PASSWORD` | empty | Redis password |
-| `REDIS_DB` | `0` | Redis database number |
+| `REDIS_DB` | `0` | Redis database number, valid `0`-`15` |
 | `OPENAI_STATUS_BASE_URL` | `https://status.openai.com` | OpenAI status page base URL |
-| `POLL_INTERVAL` | `1m` | Status check interval |
-| `HTTP_TIMEOUT` | `10s` | HTTP request timeout |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
+| `POLL_INTERVAL` | `1m` | Status check interval, valid `5s`-`1h` |
+| `HTTP_TIMEOUT` | `10s` | HTTP request timeout, valid `1s`-`5m` |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`/`warning`, or `error` |
 
 ## Notes
 

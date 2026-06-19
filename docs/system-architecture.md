@@ -28,7 +28,7 @@ Redis stores subscribers, subscription settings, polling checkpoints, delivery r
 | `openai-status:subscribers` | set | Telegram chat or topic subscribers |
 | `openai-status:subscriber-settings` | hash | Subscription types and component ID filters by subscriber key |
 | `openai-status:component-statuses` | hash | Last seen component status by component ID |
-| `openai-status:incident-updates` | set | Legacy seen incident update IDs, retained for migration |
+| `openai-status:incident-updates` | set | Legacy seen incident update IDs, retained as write-through metadata; version hash is authoritative |
 | `openai-status:incident-update-versions` | hash | Seen incident update version by update ID |
 | `openai-status:event-delivery:<hash>` | set | Temporary per-event subscriber delivery state for retry isolation |
 | `openai-status:telegram-offset` | string | Last processed Telegram update offset |
@@ -47,5 +47,5 @@ The service uses Telegram `getUpdates`, so it does not need a public webhook URL
 - Retryable Telegram failures do not advance component or incident checkpoints.
 - Successful per-subscriber deliveries are tracked temporarily, so retrying one failed subscriber does not resend to already-delivered subscribers.
 - Telegram 403 and selected terminal 400 errors remove the unreachable subscriber, then delivery continues.
-- Malformed subscriber keys are skipped instead of blocking all fan-out.
+- Malformed subscriber keys are removed from Redis and surfaced as an error for the current poll instead of being skipped silently.
 - Redis connection failure at startup exits the process.
