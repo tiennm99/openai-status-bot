@@ -19,6 +19,13 @@ func TestNormalizeCommandIgnoresOtherBotUsername(t *testing.T) {
 	}
 }
 
+func TestNormalizeCommandIgnoresTargetedCommandWhenUsernameUnknown(t *testing.T) {
+	command, _ := normalizeCommand("/start@OtherBot", "")
+	if command != "" {
+		t.Fatalf("command = %q, want empty", command)
+	}
+}
+
 func TestParseHistoryCount(t *testing.T) {
 	tests := []struct {
 		name   string

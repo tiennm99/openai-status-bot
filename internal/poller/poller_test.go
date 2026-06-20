@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,7 +32,9 @@ type fakePollerStore struct {
 	incidentVersions  map[string]string
 	subscribers       []redisstore.Subscriber
 	delivered         map[string]map[string]bool
+	hasDeliveredErr   error
 	markDeliveredErr  error
+	removeErr         error
 	savedComponents   map[string]string
 	markedVersions    map[string]string
 	pendingComponents map[string]redisstore.PendingComponentEvent
@@ -59,6 +62,9 @@ func (f *fakePollerStore) ClearDelivery(_ context.Context, eventKey string) erro
 }
 
 func (f *fakePollerStore) HasDelivered(_ context.Context, eventKey, subscriberKey string) (bool, error) {
+	if f.hasDeliveredErr != nil {
+		return false, f.hasDeliveredErr
+	}
 	return f.delivered[eventKey][subscriberKey], nil
 }
 
@@ -111,6 +117,9 @@ func (f *fakePollerStore) RemovePendingComponentEvent(_ context.Context, compone
 }
 
 func (f *fakePollerStore) RemoveSubscriber(_ context.Context, sub redisstore.Subscriber) error {
+	if f.removeErr != nil {
+		return f.removeErr
+	}
 	f.removed = append(f.removed, sub.Key())
 	return nil
 }
@@ -127,12 +136,20 @@ func (f *fakePollerStore) SetInitialized(context.Context) error {
 }
 
 type fakeNotifier struct {
-	errors map[string]error
-	sends  []string
+	errors     map[string]error
+	errorQueue map[string][]error
+	sends      []string
+	messages   []string
 }
 
-func (f *fakeNotifier) SendMessage(_ context.Context, sub redisstore.Subscriber, _ string) error {
+func (f *fakeNotifier) SendMessage(_ context.Context, sub redisstore.Subscriber, text string) error {
 	f.sends = append(f.sends, sub.Key())
+	f.messages = append(f.messages, text)
+	if queued := f.errorQueue[sub.Key()]; len(queued) > 0 {
+		err := queued[0]
+		f.errorQueue[sub.Key()] = queued[1:]
+		return err
+	}
 	if f.errors != nil {
 		return f.errors[sub.Key()]
 	}
@@ -179,6 +196,91 @@ func TestCheckOnceSkipsAlreadyDeliveredSubscriberOnRetry(t *testing.T) {
 	}
 	if got := store.savedComponents["c1"]; got != "degraded_performance" {
 		t.Fatalf("component checkpoint = %q", got)
+	}
+}
+
+func TestCheckOnceContinuesFanOutAfterRetryableSendFailures(t *testing.T) {
+	store := newFakePollerStore()
+	store.initialized = true
+	store.componentStatuses["c1"] = "operational"
+	store.componentStatuses["c2"] = "operational"
+	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil), redisstore.NewSubscriber(2, nil)}
+	notifier := &fakeNotifier{errors: map[string]error{"1": errors.New("rate limit")}}
+	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
+		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c2", Name: "ChatGPT", Status: "partial_outage", UpdatedAt: "2026-01-01T00:01:00Z"},
+	}}}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err == nil {
+		t.Fatal("expected retryable send error")
+	}
+	if got, want := notifier.sends, []string{"1", "2", "2"}; !equalStrings(got, want) {
+		t.Fatalf("sends = %v, want %v", got, want)
+	}
+	if len(store.savedComponents) != 0 {
+		t.Fatalf("savedComponents = %v, want no checkpoints after delivery error", store.savedComponents)
+	}
+}
+
+func TestCheckOnceStopsOnDeliveryStateReadError(t *testing.T) {
+	store := newFakePollerStore()
+	store.initialized = true
+	store.componentStatuses["c1"] = "operational"
+	store.componentStatuses["c2"] = "operational"
+	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	store.hasDeliveredErr = errors.New("redis read failed")
+	notifier := &fakeNotifier{}
+	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
+		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c2", Name: "ChatGPT", Status: "partial_outage", UpdatedAt: "2026-01-01T00:01:00Z"},
+	}}}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "redis read failed") {
+		t.Fatalf("CheckOnce error = %v, want delivery state read error", err)
+	}
+	if len(notifier.sends) != 0 {
+		t.Fatalf("sends = %v, want none after delivery state read error", notifier.sends)
+	}
+}
+
+func TestCheckOnceStopsWhenTerminalSubscriberRemovalFails(t *testing.T) {
+	store := newFakePollerStore()
+	store.initialized = true
+	store.componentStatuses["c1"] = "operational"
+	store.componentStatuses["c2"] = "operational"
+	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	store.removeErr = errors.New("redis remove failed")
+	notifier := &fakeNotifier{errors: map[string]error{"1": &telegram.APIError{StatusCode: 200, ErrorCode: 403, Description: "Forbidden: bot was blocked by the user"}}}
+	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
+		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c2", Name: "ChatGPT", Status: "partial_outage", UpdatedAt: "2026-01-01T00:01:00Z"},
+	}}}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "redis remove failed") {
+		t.Fatalf("CheckOnce error = %v, want subscriber remove error", err)
+	}
+	if got, want := notifier.sends, []string{"1"}; !equalStrings(got, want) {
+		t.Fatalf("sends = %v, want %v", got, want)
+	}
+}
+
+func TestCheckOnceSkipsLaterEventsForSubscriberAfterRetryableFailure(t *testing.T) {
+	store := newFakePollerStore()
+	store.initialized = true
+	store.componentStatuses["c1"] = "operational"
+	store.componentStatuses["c2"] = "operational"
+	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil), redisstore.NewSubscriber(2, nil)}
+	notifier := &fakeNotifier{errorQueue: map[string][]error{"1": {errors.New("rate limit")}}}
+	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
+		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c2", Name: "ChatGPT", Status: "partial_outage", UpdatedAt: "2026-01-01T00:01:00Z"},
+	}}}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err == nil {
+		t.Fatal("expected retryable send error")
+	}
+	if got, want := notifier.sends, []string{"1", "2", "2"}; !equalStrings(got, want) {
+		t.Fatalf("sends = %v, want %v", got, want)
 	}
 }
 
@@ -265,6 +367,55 @@ func TestPendingComponentEventSurvivesReturnToPreviousStatus(t *testing.T) {
 	}
 }
 
+func TestPendingComponentLabelDoesNotCountCurrentComponentAsDuplicate(t *testing.T) {
+	store := newFakePollerStore()
+	store.initialized = true
+	store.componentStatuses["c1"] = "operational"
+	store.pendingComponents["c1"] = redisstore.PendingComponentEvent{
+		ComponentID:    "c1",
+		ComponentName:  "API",
+		Status:         "degraded_performance",
+		UpdatedAt:      "2026-01-01T00:00:00Z",
+		PreviousStatus: "operational",
+		DeliveryKey:    "component:c1:degraded_performance:2026-01-01T00:00:00Z",
+	}
+	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	notifier := &fakeNotifier{}
+	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err != nil {
+		t.Fatalf("CheckOnce returned error: %v", err)
+	}
+	if len(notifier.messages) != 1 {
+		t.Fatalf("messages = %v, want one message", notifier.messages)
+	}
+	if strings.Contains(notifier.messages[0], "(ID:") {
+		t.Fatalf("message counted current component as duplicate: %s", notifier.messages[0])
+	}
+}
+
+func TestPendingComponentDuplicateLabelsIncludeCurrentRename(t *testing.T) {
+	pending := map[string]redisstore.PendingComponentEvent{
+		"c1": {
+			ComponentID:   "c1",
+			ComponentName: "Old API",
+			Status:        "degraded_performance",
+		},
+	}
+	components := []openai.Component{
+		{ID: "c1", Name: "API", Status: "degraded_performance"},
+		{ID: "c2", Name: "API", Status: "operational"},
+	}
+
+	duplicates := duplicateComponentNames(componentsForDuplicateLabels(components, pending))
+	if !duplicates["API"] {
+		t.Fatalf("duplicates = %v, want current API rename counted as duplicate", duplicates)
+	}
+	if duplicates["Old API"] {
+		t.Fatalf("duplicates = %v, old pending name should not be duplicate", duplicates)
+	}
+}
+
 func TestCheckOnceContinuesWhenMarkDeliveredFailsAfterSend(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true
@@ -317,4 +468,16 @@ func TestCheckOnceDoesNotRemarkSeenIncidentVersion(t *testing.T) {
 
 func summaryWithComponent(id, name, status string) openai.Summary {
 	return openai.Summary{Components: []openai.Component{{ID: id, Name: name, Status: status, UpdatedAt: "2026-01-01T00:00:00Z"}}}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

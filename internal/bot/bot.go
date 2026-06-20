@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ type Store interface {
 	RemoveSubscriber(ctx context.Context, sub redisstore.Subscriber) error
 	SaveTelegramOffset(ctx context.Context, offset int64) error
 	TelegramOffset(ctx context.Context) (int64, error)
-	UpdateSubscriberComponents(ctx context.Context, sub redisstore.Subscriber, components []string) (bool, error)
+	UpdateSubscriberSettings(ctx context.Context, sub redisstore.Subscriber, types, components []string) (bool, error)
 	UpdateSubscriberTypes(ctx context.Context, sub redisstore.Subscriber, types []string) (bool, error)
 }
 
@@ -56,7 +57,7 @@ func New(telegramClient TelegramClient, statusClient StatusClient, store Store, 
 func (b *Bot) Run(ctx context.Context) error {
 	offset, err := b.store.TelegramOffset(ctx)
 	if err != nil {
-		b.logger.Warn("load telegram offset", "error", err)
+		return fmt.Errorf("load telegram offset: %w", err)
 	}
 
 	for {
@@ -134,7 +135,7 @@ func (b *Bot) subscribe(ctx context.Context, message telegram.Message) {
 		b.reply(ctx, message, "Could not subscribe right now.")
 		return
 	}
-	b.reply(ctx, message, "Subscribed to OpenAI status updates (incidents + components). Use /subscribe to change preferences.")
+	b.reply(ctx, message, "Subscribed to OpenAI status updates. Use /subscribe to change preferences.")
 }
 
 func (b *Bot) unsubscribe(ctx context.Context, message telegram.Message) {

@@ -45,11 +45,7 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 		return nil, nil, nil, err
 	}
 
-	componentsForLabels := append([]openai.Component{}, summary.Components...)
-	for _, pendingEvent := range pending {
-		componentsForLabels = append(componentsForLabels, pendingComponent(pendingEvent))
-	}
-	duplicates := duplicateComponentNames(componentsForLabels)
+	duplicates := duplicateComponentNames(componentsForDuplicateLabels(summary.Components, pending))
 
 	events := make([]notificationEvent, 0)
 	before := make([]checkpoint, 0)
@@ -182,6 +178,30 @@ func pendingComponent(event redisstore.PendingComponentEvent) openai.Component {
 		UpdatedAt: event.UpdatedAt,
 		Position:  event.Position,
 	}
+}
+
+func componentsForDuplicateLabels(components []openai.Component, pending map[string]redisstore.PendingComponentEvent) []openai.Component {
+	result := make([]openai.Component, 0, len(components)+len(pending))
+	seen := map[string]bool{}
+	add := func(component openai.Component) {
+		if component.ID == "" {
+			result = append(result, component)
+			return
+		}
+		key := component.ID + "\x00" + component.Name
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		result = append(result, component)
+	}
+	for _, component := range components {
+		add(component)
+	}
+	for _, pendingEvent := range pending {
+		add(pendingComponent(pendingEvent))
+	}
+	return result
 }
 
 func IncidentUpdateVersion(update openai.IncidentUpdate) string {

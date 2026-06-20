@@ -52,6 +52,9 @@ func TestLoadFromEnvRejectsInvalidValues(t *testing.T) {
 		{name: "poll interval too small", key: "POLL_INTERVAL", value: "1ns", wantErr: "POLL_INTERVAL must be between 5s and 1h0m0s"},
 		{name: "http timeout too small", key: "HTTP_TIMEOUT", value: "500ms", wantErr: "HTTP_TIMEOUT must be between 1s and 5m0s"},
 		{name: "base url missing scheme", key: "OPENAI_STATUS_BASE_URL", value: "status.openai.com", wantErr: "OPENAI_STATUS_BASE_URL must use http or https"},
+		{name: "base url with bare query marker", key: "OPENAI_STATUS_BASE_URL", value: "https://status.openai.com?", wantErr: "OPENAI_STATUS_BASE_URL must not include query or fragment"},
+		{name: "base url with query", key: "OPENAI_STATUS_BASE_URL", value: "https://status.openai.com?foo=bar", wantErr: "OPENAI_STATUS_BASE_URL must not include query or fragment"},
+		{name: "base url with fragment", key: "OPENAI_STATUS_BASE_URL", value: "https://status.openai.com#api", wantErr: "OPENAI_STATUS_BASE_URL must not include query or fragment"},
 		{name: "invalid log level", key: "LOG_LEVEL", value: "verbose", wantErr: "LOG_LEVEL must be one of"},
 	}
 

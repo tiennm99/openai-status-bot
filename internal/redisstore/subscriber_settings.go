@@ -13,6 +13,14 @@ type subscriberSettings struct {
 	Components []string `json:"components"`
 }
 
+var updateSubscriberSettingsScript = redis.NewScript(`
+if redis.call("SISMEMBER", KEYS[1], ARGV[1]) == 0 then
+	return 0
+end
+redis.call("HSET", KEYS[2], ARGV[1], ARGV[2])
+return 1
+`)
+
 func (s *Store) loadExistingSubscriberSettings(ctx context.Context, key string) (subscriberSettings, bool, error) {
 	exists, err := s.client.SIsMember(ctx, subscribersKey, key).Result()
 	if err != nil || !exists {
@@ -25,13 +33,20 @@ func (s *Store) loadExistingSubscriberSettings(ctx context.Context, key string) 
 func (s *Store) loadSubscriberSettings(ctx context.Context, key string) (subscriberSettings, error) {
 	value, err := s.client.HGet(ctx, subscriberSettingsKey, key).Result()
 	if err == redis.Nil {
-		return subscriberSettings{Types: DefaultSubscriptionTypes(), Components: []string{}}, nil
+		return defaultSubscriberSettings(), nil
 	}
 	if err != nil {
 		return subscriberSettings{}, err
 	}
 
-	return decodeSubscriberSettings(key, value)
+	settings, err := decodeSubscriberSettings(key, value)
+	if err == nil {
+		return settings, nil
+	}
+	if removeErr := s.client.HDel(ctx, subscriberSettingsKey, key).Err(); removeErr != nil {
+		return subscriberSettings{}, fmt.Errorf("clear corrupt subscriber settings %q: %w", key, removeErr)
+	}
+	return defaultSubscriberSettings(), nil
 }
 
 func decodeSubscriberSettings(key, value string) (subscriberSettings, error) {
@@ -52,4 +67,22 @@ func (s *Store) saveSubscriberSettings(ctx context.Context, key string, settings
 		return err
 	}
 	return s.client.HSet(ctx, subscriberSettingsKey, key, payload).Err()
+}
+
+func (s *Store) saveExistingSubscriberSettings(ctx context.Context, key string, settings subscriberSettings) (bool, error) {
+	settings.Types = normalizeTypes(settings.Types)
+	settings.Components = normalizeComponents(settings.Components)
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		return false, err
+	}
+	updated, err := updateSubscriberSettingsScript.Run(ctx, s.client, []string{subscribersKey, subscriberSettingsKey}, key, string(payload)).Int()
+	if err != nil {
+		return false, err
+	}
+	return updated == 1, nil
+}
+
+func defaultSubscriberSettings() subscriberSettings {
+	return subscriberSettings{Types: DefaultSubscriptionTypes(), Components: []string{}}
 }

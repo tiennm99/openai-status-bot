@@ -112,10 +112,17 @@ func (r *Runner) CheckOnce(ctx context.Context) error {
 			return err
 		}
 		removedSubscribers := map[string]bool{}
+		failedSubscribers := map[string]bool{}
+		deliveryErr := &deliveryError{}
 		for _, event := range events {
-			if err := r.notifySubscribers(ctx, event, subscribers, removedSubscribers); err != nil {
+			failures, err := r.notifySubscribers(ctx, event, subscribers, removedSubscribers, failedSubscribers)
+			if err != nil {
 				return err
 			}
+			deliveryErr.addAll(failures)
+		}
+		if deliveryErr.count > 0 {
+			return deliveryErr
 		}
 	}
 

@@ -165,7 +165,17 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any, target 
 		ErrorCode   int             `json:"error_code"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&envelope); err != nil {
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return &APIError{StatusCode: res.StatusCode, Description: res.Status}
+		}
 		return fmt.Errorf("decode telegram response: %w", err)
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		description := envelope.Description
+		if description == "" {
+			description = res.Status
+		}
+		return &APIError{StatusCode: res.StatusCode, ErrorCode: envelope.ErrorCode, Description: description}
 	}
 	if !envelope.OK {
 		return &APIError{StatusCode: res.StatusCode, ErrorCode: envelope.ErrorCode, Description: envelope.Description}

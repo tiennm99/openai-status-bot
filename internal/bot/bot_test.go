@@ -48,6 +48,7 @@ type fakeBotStore struct {
 	subscribed bool
 	types      []string
 	components []string
+	offsetErr  error
 }
 
 func (f *fakeBotStore) AddSubscriber(_ context.Context, sub redisstore.Subscriber) error {
@@ -73,21 +74,22 @@ func (f *fakeBotStore) RemoveSubscriber(context.Context, redisstore.Subscriber) 
 }
 
 func (f *fakeBotStore) SaveTelegramOffset(context.Context, int64) error { return nil }
-func (f *fakeBotStore) TelegramOffset(context.Context) (int64, error)   { return 0, nil }
-
-func (f *fakeBotStore) UpdateSubscriberComponents(_ context.Context, _ redisstore.Subscriber, components []string) (bool, error) {
-	if !f.subscribed {
-		return false, nil
-	}
-	f.components = append([]string{}, components...)
-	return true, nil
-}
+func (f *fakeBotStore) TelegramOffset(context.Context) (int64, error)   { return 0, f.offsetErr }
 
 func (f *fakeBotStore) UpdateSubscriberTypes(_ context.Context, _ redisstore.Subscriber, types []string) (bool, error) {
 	if !f.subscribed {
 		return false, nil
 	}
 	f.types = append([]string{}, types...)
+	return true, nil
+}
+
+func (f *fakeBotStore) UpdateSubscriberSettings(_ context.Context, _ redisstore.Subscriber, types, components []string) (bool, error) {
+	if !f.subscribed {
+		return false, nil
+	}
+	f.types = append([]string{}, types...)
+	f.components = append([]string{}, components...)
 	return true, nil
 }
 
@@ -162,6 +164,16 @@ func TestRunReturnsPromptlyWhenContextCanceledAfterGetUpdatesError(t *testing.T)
 	}
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("Run took %s after context cancellation", elapsed)
+	}
+}
+
+func TestRunReturnsTelegramOffsetError(t *testing.T) {
+	store := &fakeBotStore{offsetErr: errors.New("invalid telegram offset")}
+	bot := New(&fakeTelegramClient{}, fakeBotStatusClient{}, store, slog.Default(), "OpenAIStatusBot")
+
+	err := bot.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "load telegram offset") {
+		t.Fatalf("Run error = %v, want telegram offset error", err)
 	}
 }
 

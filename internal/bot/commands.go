@@ -62,24 +62,25 @@ func (b *Bot) updateComponentFilter(ctx context.Context, message telegram.Messag
 	}
 	componentArg = strings.TrimSpace(componentArg)
 	if strings.EqualFold(componentArg, "all") {
-		current, _, err := b.store.GetSubscriber(ctx, sub)
+		current, exists, err := b.store.GetSubscriber(ctx, sub)
 		if err != nil {
 			b.logger.Error("load subscription", "error", err)
 			b.reply(ctx, message, "Could not update component filter right now.")
 			return
 		}
-		if _, err := b.store.UpdateSubscriberComponents(ctx, sub, nil); err != nil {
+		if !exists {
+			b.reply(ctx, message, "Not subscribed yet. Use /start first.")
+			return
+		}
+		updated, err := b.store.UpdateSubscriberSettings(ctx, sub, withSubscriptionType(current.Types, redisstore.SubscriptionTypeComponent), nil)
+		if err != nil {
 			b.logger.Error("clear component filter", "error", err)
 			b.reply(ctx, message, "Could not update component filter right now.")
 			return
 		}
-		if !containsComponent(current.Types, redisstore.SubscriptionTypeComponent) {
-			current.Types = append(current.Types, redisstore.SubscriptionTypeComponent)
-			if _, err := b.store.UpdateSubscriberTypes(ctx, sub, current.Types); err != nil {
-				b.logger.Error("update component type", "error", err)
-				b.reply(ctx, message, "Could not update subscription right now.")
-				return
-			}
+		if !updated {
+			b.reply(ctx, message, "Not subscribed yet. Use /start first.")
+			return
 		}
 		b.reply(ctx, message, "Component filter cleared. Receiving all component updates.")
 		return
@@ -102,30 +103,40 @@ func (b *Bot) updateComponentFilter(ctx context.Context, message telegram.Messag
 	}
 	component := resolution.Component
 
-	current, _, err := b.store.GetSubscriber(ctx, sub)
+	current, exists, err := b.store.GetSubscriber(ctx, sub)
 	if err != nil {
 		b.logger.Error("load component filters", "error", err)
 		b.reply(ctx, message, "Could not update component filter right now.")
+		return
+	}
+	if !exists {
+		b.reply(ctx, message, "Not subscribed yet. Use /start first.")
 		return
 	}
 	components := append([]string{}, current.Components...)
 	if !containsComponent(components, component.ID) {
 		components = append(components, component.ID)
 	}
-	if _, err := b.store.UpdateSubscriberComponents(ctx, sub, components); err != nil {
+	types := withSubscriptionType(current.Types, redisstore.SubscriptionTypeComponent)
+	updated, err := b.store.UpdateSubscriberSettings(ctx, sub, types, components)
+	if err != nil {
 		b.logger.Error("update component filter", "error", err)
 		b.reply(ctx, message, "Could not update component filter right now.")
 		return
 	}
-	if !containsComponent(current.Types, redisstore.SubscriptionTypeComponent) {
-		current.Types = append(current.Types, redisstore.SubscriptionTypeComponent)
-		if _, err := b.store.UpdateSubscriberTypes(ctx, sub, current.Types); err != nil {
-			b.logger.Error("update component type", "error", err)
-			b.reply(ctx, message, "Could not update subscription right now.")
-			return
-		}
+	if !updated {
+		b.reply(ctx, message, "Not subscribed yet. Use /start first.")
+		return
 	}
 	b.reply(ctx, message, fmt.Sprintf("Subscribed to component: <code>%s</code>\nActive filters: <code>%s</code>", escape(componentLabel(component, duplicateComponentNames(summary.Components)[component.Name])), escape(componentFilterLabels(summary.Components, components))))
+}
+
+func withSubscriptionType(types []string, subscriptionType string) []string {
+	updated := append([]string{}, types...)
+	if !containsComponent(updated, subscriptionType) {
+		updated = append(updated, subscriptionType)
+	}
+	return updated
 }
 
 func (b *Bot) replyHistory(ctx context.Context, message telegram.Message, count int) {

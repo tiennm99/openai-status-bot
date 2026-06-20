@@ -127,7 +127,7 @@ func (s *Store) UpdateSubscriberTypes(ctx context.Context, sub Subscriber, types
 		return false, err
 	}
 	settings.Types = normalizeTypes(types)
-	return true, s.saveSubscriberSettings(ctx, key, settings)
+	return s.saveExistingSubscriberSettings(ctx, key, settings)
 }
 
 func (s *Store) UpdateSubscriberComponents(ctx context.Context, sub Subscriber, components []string) (bool, error) {
@@ -137,7 +137,15 @@ func (s *Store) UpdateSubscriberComponents(ctx context.Context, sub Subscriber, 
 		return false, err
 	}
 	settings.Components = normalizeComponents(components)
-	return true, s.saveSubscriberSettings(ctx, key, settings)
+	return s.saveExistingSubscriberSettings(ctx, key, settings)
+}
+
+func (s *Store) UpdateSubscriberSettings(ctx context.Context, sub Subscriber, types, components []string) (bool, error) {
+	key := sub.Key()
+	return s.saveExistingSubscriberSettings(ctx, key, subscriberSettings{
+		Types:      types,
+		Components: components,
+	})
 }
 
 func (s *Store) loadSubscriber(ctx context.Context, key string) (Subscriber, bool, error) {

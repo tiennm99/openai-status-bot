@@ -98,6 +98,41 @@ func TestSendTextCapturesTelegramErrorCode(t *testing.T) {
 	}
 }
 
+func TestSendTextPreservesNonJSONHTTPErrorStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "gateway", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, httpClient: server.Client()}
+	err := client.SendText(context.Background(), 123, nil, "hello")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("SendText error = %v, want APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusBadGateway {
+		t.Fatalf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusBadGateway)
+	}
+}
+
+func TestSendTextRejectsNonSuccessHTTPStatusEvenWhenEnvelopeOK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, httpClient: server.Client()}
+	err := client.SendText(context.Background(), 123, nil, "hello")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("SendText error = %v, want APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusTooManyRequests)
+	}
+}
+
 func TestNewClientUsesConfiguredTimeoutForOrdinaryRequests(t *testing.T) {
 	client := NewClient("token", 10*time.Second)
 	if client.requestTimeout != 10*time.Second {

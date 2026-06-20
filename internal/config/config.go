@@ -113,6 +113,9 @@ func validateBaseURL(key, value string) error {
 	if parsed.Host == "" {
 		return fmt.Errorf("%s must include a host", key)
 	}
+	if parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("%s must not include query or fragment", key)
+	}
 	return nil
 }
 

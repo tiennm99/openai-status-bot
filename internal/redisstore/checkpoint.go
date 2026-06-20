@@ -94,6 +94,16 @@ func (s *Store) HasIncidentUpdateVersion(ctx context.Context, updateID, version 
 	if err != redis.Nil {
 		return false, err
 	}
+	legacySeen, err := s.HasIncidentUpdate(ctx, updateID)
+	if err != nil {
+		return false, err
+	}
+	if legacySeen {
+		if err := s.client.HSet(ctx, incidentVersionsKey, updateID, version).Err(); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	return false, nil
 }
 
@@ -132,7 +142,10 @@ func (s *Store) TelegramOffset(ctx context.Context) (int64, error) {
 	}
 	offset, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid telegram offset: %w", err)
+		if deleteErr := s.client.Del(ctx, telegramOffsetKey).Err(); deleteErr != nil {
+			return 0, fmt.Errorf("clear invalid telegram offset: %w", deleteErr)
+		}
+		return 0, nil
 	}
 	return offset, nil
 }
