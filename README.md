@@ -36,6 +36,14 @@ cp .env.example .env
 docker compose up --build
 ```
 
+To deploy only the bot when Redis is hosted elsewhere:
+
+```bash
+cp .env.example .env
+# edit .env and set TELEGRAM_BOT_TOKEN plus REDIS_URL for the external Redis host
+docker compose -f docker-compose.bot.yml up -d --build
+```
+
 For local development without Docker:
 
 ```bash

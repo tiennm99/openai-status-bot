@@ -15,6 +15,17 @@ cp .env.example .env
 docker compose up --build
 ```
 
+## Bot-Only Docker Run
+
+Use this when Redis is hosted outside Docker Compose:
+
+```bash
+cp .env.example .env
+# set TELEGRAM_BOT_TOKEN in .env
+# set REDIS_URL to the external Redis URL, not localhost
+docker compose -f docker-compose.bot.yml up -d --build
+```
+
 ## Local Go Run
 
 Start Redis:
