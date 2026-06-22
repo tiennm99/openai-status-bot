@@ -5,16 +5,15 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type Config struct {
 	TelegramBotToken    string
-	RedisAddr           string
-	RedisPassword       string
-	RedisDB             int
+	RedisOptions        *redis.Options
 	OpenAIStatusBaseURL string
 	PollInterval        time.Duration
 	HTTPTimeout         time.Duration
@@ -33,22 +32,20 @@ const (
 func LoadFromEnv() (Config, error) {
 	cfg := Config{
 		TelegramBotToken:    strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		RedisAddr:           getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword:       strings.TrimSpace(os.Getenv("REDIS_PASSWORD")),
 		OpenAIStatusBaseURL: strings.TrimRight(getEnv("OPENAI_STATUS_BASE_URL", "https://status.openai.com"), "/"),
 	}
 	if cfg.TelegramBotToken == "" {
 		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is required")
 	}
+	var err error
+	cfg.RedisOptions, err = parseRedisURL("REDIS_URL", getEnv("REDIS_URL", "redis://localhost:6379/0"))
+	if err != nil {
+		return Config{}, err
+	}
 	if err := validateBaseURL("OPENAI_STATUS_BASE_URL", cfg.OpenAIStatusBaseURL); err != nil {
 		return Config{}, err
 	}
 
-	var err error
-	cfg.RedisDB, err = parseBoundedIntEnv("REDIS_DB", 0, minRedisDB, maxRedisDB)
-	if err != nil {
-		return Config{}, err
-	}
 	cfg.PollInterval, err = parseDurationEnv("POLL_INTERVAL", time.Minute, minPollInterval, maxPollInterval)
 	if err != nil {
 		return Config{}, err
@@ -72,21 +69,6 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func parseBoundedIntEnv(key string, fallback, minValue, maxValue int) (int, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
-	}
-	if parsed < minValue || parsed > maxValue {
-		return 0, fmt.Errorf("%s must be between %d and %d", key, minValue, maxValue)
-	}
-	return parsed, nil
-}
-
 func parseDurationEnv(key string, fallback, minValue, maxValue time.Duration) (time.Duration, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
@@ -100,6 +82,17 @@ func parseDurationEnv(key string, fallback, minValue, maxValue time.Duration) (t
 		return 0, fmt.Errorf("%s must be between %s and %s", key, minValue, maxValue)
 	}
 	return parsed, nil
+}
+
+func parseRedisURL(key, value string) (*redis.Options, error) {
+	options, err := redis.ParseURL(value)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be a valid Redis URL", key)
+	}
+	if options.DB < minRedisDB || options.DB > maxRedisDB {
+		return nil, fmt.Errorf("%s database must be between %d and %d", key, minRedisDB, maxRedisDB)
+	}
+	return options, nil
 }
 
 func validateBaseURL(key, value string) error {

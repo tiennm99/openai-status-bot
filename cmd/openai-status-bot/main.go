@@ -31,13 +31,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisAddr,
-		Password: cfg.RedisPassword,
-		DB:       cfg.RedisDB,
-	})
+	redisClient := redis.NewClient(cfg.RedisOptions)
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Error("connect redis", "addr", cfg.RedisAddr, "error", err)
+		logger.Error("connect redis", "network", cfg.RedisOptions.Network, "addr", cfg.RedisOptions.Addr, "db", cfg.RedisOptions.DB, "tls", cfg.RedisOptions.TLSConfig != nil, "error", err)
 		os.Exit(1)
 	}
 	defer redisClient.Close()

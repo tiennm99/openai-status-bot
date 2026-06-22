@@ -38,7 +38,7 @@ Subscriber set members are `chatID` or `chatID:threadID`. Missing settings defau
 
 ## Runtime
 
-The service uses Telegram `getUpdates`, so it does not need a public webhook URL. On startup it calls `deleteWebhook` before long polling, which allows migration from a webhook-based deployment using the same bot token. Docker Compose starts Redis and the bot.
+The service uses Telegram `getUpdates`, so it does not need a public webhook URL. On startup it calls `deleteWebhook` before long polling, which allows migration from a webhook-based deployment using the same bot token. Redis is configured with `REDIS_URL`. Docker Compose starts Redis and the bot.
 
 ## Failure Behavior
 
