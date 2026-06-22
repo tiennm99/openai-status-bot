@@ -15,6 +15,8 @@ cp .env.example .env
 docker compose up --build
 ```
 
+The bundled Redis service is for local development and binds to `127.0.0.1:6379` on the host.
+
 ## Bot-Only Docker Run
 
 Use this when Redis is hosted outside Docker Compose:
@@ -31,7 +33,7 @@ docker compose -f docker-compose.bot.yml up -d --build
 Start Redis:
 
 ```bash
-docker run --rm -p 6379:6379 redis:7-alpine
+docker run --rm -p 127.0.0.1:6379:6379 redis:7-alpine
 ```
 
 Run bot:
@@ -51,3 +53,5 @@ go build -o /tmp/openai-status-bot ./cmd/openai-status-bot
 ```
 
 Then send `/start` to the Telegram bot and run `/status`. If the same token was previously used by a webhook deployment, startup clears that webhook before long polling begins.
+
+Docker images include a health check against `http://127.0.0.1:8080/healthz` inside the container.

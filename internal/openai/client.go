@@ -14,7 +14,13 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func NewClient(baseURL string, timeout time.Duration) *Client {
+const BaseURL = "https://status.openai.com"
+
+func NewClient(timeout time.Duration) *Client {
+	return newClient(BaseURL, timeout)
+}
+
+func newClient(baseURL string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{

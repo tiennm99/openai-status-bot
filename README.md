@@ -12,6 +12,7 @@ Telegram bot that watches [OpenAI Status](https://status.openai.com/) every minu
 - Supports Telegram supergroup topics via `message_thread_id`
 - Clears an existing Telegram webhook before long polling, for migration from webhook deployments
 - Registers the Telegram command menu on startup
+- Exposes a local health endpoint for container health checks
 - Includes Docker Compose for local Redis + bot runtime
 
 ## Bot Commands
@@ -58,12 +59,13 @@ go run ./cmd/openai-status-bot
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | required | Telegram bot token from BotFather |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL, e.g. `redis://:password@localhost:6379/0` |
-| `OPENAI_STATUS_BASE_URL` | `https://status.openai.com` | OpenAI status page base URL |
 | `POLL_INTERVAL` | `1m` | Status check interval, valid `5s`-`1h` |
 | `HTTP_TIMEOUT` | `10s` | HTTP request timeout, valid `1s`-`5m` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`/`warning`, or `error` |
 
 Percent-encode Redis usernames or passwords that contain URL-reserved characters such as `@`, `:`, `/`, `#`, or `%`.
+
+The bot always reads OpenAI status from `https://status.openai.com`.
 
 ## Notes
 

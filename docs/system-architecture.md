@@ -15,8 +15,8 @@ Redis stores subscribers, subscription settings, polling checkpoints, delivery r
 2. Bot stores chat ID, optional topic thread ID, and default subscription settings in Redis.
 3. Users can adjust settings with `/subscribe` and inspect them with `/info`.
 4. Poller fetches OpenAI status JSON:
-   - `GET /api/v2/summary.json`
-   - `GET /api/v2/incidents.json`
+   - `GET https://status.openai.com/api/v2/summary.json`
+   - `GET https://status.openai.com/api/v2/incidents.json`
 5. Poller compares fetched state with Redis checkpoints and builds notification events without mutating checkpoints.
 6. Events are sent to eligible subscribers, respecting incident/component preferences and component ID filters.
 7. Component and incident checkpoints are written only after delivery succeeds or terminal subscriber failures are removed.
@@ -28,6 +28,7 @@ Redis stores subscribers, subscription settings, polling checkpoints, delivery r
 | `openai-status:subscribers` | set | Telegram chat or topic subscribers |
 | `openai-status:subscriber-settings` | hash | Subscription types and component ID filters by subscriber key |
 | `openai-status:component-statuses` | hash | Last seen component status by component ID |
+| `openai-status:pending-component-events` | hash | Component changes saved before fan-out so retryable delivery failures can be resumed |
 | `openai-status:incident-updates` | set | Legacy seen incident update IDs, retained as write-through metadata; version hash is authoritative |
 | `openai-status:incident-update-versions` | hash | Seen incident update version by update ID |
 | `openai-status:event-delivery:<hash>` | set | Temporary per-event subscriber delivery state for retry isolation |
@@ -38,7 +39,7 @@ Subscriber set members are `chatID` or `chatID:threadID`. Missing settings defau
 
 ## Runtime
 
-The service uses Telegram `getUpdates`, so it does not need a public webhook URL. On startup it calls `deleteWebhook` before long polling, registers the Telegram command menu, and then starts polling. Redis is configured with `REDIS_URL`. Docker Compose starts Redis and the bot.
+The service uses Telegram `getUpdates`, so it does not need a public webhook URL. On startup it starts a local health endpoint at `127.0.0.1:8080/healthz`, calls `deleteWebhook` before long polling, registers the Telegram command menu, and then starts polling. Redis is configured with `REDIS_URL`. The OpenAI status source is fixed to `https://status.openai.com`. Docker Compose starts Redis and the bot for local development; the bundled Redis port is bound to `127.0.0.1` on the host.
 
 ## Failure Behavior
 
@@ -46,6 +47,7 @@ The service uses Telegram `getUpdates`, so it does not need a public webhook URL
 - OpenAI fetch failures are logged and retried on the next interval.
 - Retryable Telegram failures do not advance component or incident checkpoints.
 - Successful per-subscriber deliveries are tracked temporarily, so retrying one failed subscriber does not resend to already-delivered subscribers.
+- Pending component events are stored before delivery and removed only after successful delivery or terminal subscriber cleanup.
 - Telegram 403 and selected terminal 400 errors remove the unreachable subscriber, then delivery continues.
 - Malformed subscriber keys are removed from Redis and surfaced as an error for the current poll instead of being skipped silently.
 - Redis connection failure at startup exits the process.

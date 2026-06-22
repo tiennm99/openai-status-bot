@@ -20,7 +20,7 @@ const helpText = `<b>OpenAI Status Bot</b>
 /status [component] - show current OpenAI status
 /components - show all component statuses
 /subscribe &lt;incident|component|all&gt; - set notification types
-/subscribe component &lt;name|all&gt; - filter component updates
+/subscribe component &lt;name|id|all&gt; - filter component updates
 /history [count] - show recent incidents, default 5, max 10
 /uptime - show component health overview
 /info - show chat and subscription details

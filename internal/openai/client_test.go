@@ -23,7 +23,7 @@ func TestFetchSummary(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, time.Second)
+	client := newClient(server.URL, time.Second)
 	summary, err := client.FetchSummary(context.Background())
 	if err != nil {
 		t.Fatalf("FetchSummary returned error: %v", err)
@@ -39,7 +39,7 @@ func TestFetchIncidentsReturnsHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, time.Second)
+	client := newClient(server.URL, time.Second)
 	if _, err := client.FetchIncidents(context.Background()); err == nil {
 		t.Fatal("expected HTTP error")
 	}

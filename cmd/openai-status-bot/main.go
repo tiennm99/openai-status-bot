@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/tiennm99/openai-status-bot/internal/bot"
 	"github.com/tiennm99/openai-status-bot/internal/config"
+	"github.com/tiennm99/openai-status-bot/internal/health"
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
 	"github.com/tiennm99/openai-status-bot/internal/poller"
 	"github.com/tiennm99/openai-status-bot/internal/redisstore"
@@ -31,6 +32,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	go health.Run(ctx, logger)
+
 	redisClient := redis.NewClient(cfg.RedisOptions)
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		logger.Error("connect redis", "network", cfg.RedisOptions.Network, "addr", cfg.RedisOptions.Addr, "db", cfg.RedisOptions.DB, "tls", cfg.RedisOptions.TLSConfig != nil, "error", err)
@@ -39,7 +42,7 @@ func main() {
 	defer redisClient.Close()
 
 	store := redisstore.New(redisClient)
-	statusClient := openai.NewClient(cfg.OpenAIStatusBaseURL, cfg.HTTPTimeout)
+	statusClient := openai.NewClient(cfg.HTTPTimeout)
 	telegramClient := telegram.NewClient(cfg.TelegramBotToken, cfg.HTTPTimeout)
 	if err := telegramClient.DeleteWebhook(ctx); err != nil {
 		logger.Error("delete telegram webhook", "error", err)

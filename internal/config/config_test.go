@@ -54,6 +54,15 @@ func TestLoadFromEnvAcceptsRedisURLCredentials(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnvIgnoresOpenAIStatusBaseURL(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("OPENAI_STATUS_BASE_URL", "not a url")
+
+	if _, err := LoadFromEnv(); err != nil {
+		t.Fatalf("LoadFromEnv returned error: %v", err)
+	}
+}
+
 func TestLoadFromEnvDoesNotLeakRedisURLCredentialsInParseErrors(t *testing.T) {
 	setMinimalEnv(t)
 	t.Setenv("REDIS_URL", "redis://:secret%zz@localhost:6379/0")
@@ -96,10 +105,6 @@ func TestLoadFromEnvRejectsInvalidValues(t *testing.T) {
 		{name: "redis url db above range", key: "REDIS_URL", value: "redis://localhost:6379/16", wantErr: "REDIS_URL database must be between 0 and 15"},
 		{name: "poll interval too small", key: "POLL_INTERVAL", value: "1ns", wantErr: "POLL_INTERVAL must be between 5s and 1h0m0s"},
 		{name: "http timeout too small", key: "HTTP_TIMEOUT", value: "500ms", wantErr: "HTTP_TIMEOUT must be between 1s and 5m0s"},
-		{name: "base url missing scheme", key: "OPENAI_STATUS_BASE_URL", value: "status.openai.com", wantErr: "OPENAI_STATUS_BASE_URL must use http or https"},
-		{name: "base url with bare query marker", key: "OPENAI_STATUS_BASE_URL", value: "https://status.openai.com?", wantErr: "OPENAI_STATUS_BASE_URL must not include query or fragment"},
-		{name: "base url with query", key: "OPENAI_STATUS_BASE_URL", value: "https://status.openai.com?foo=bar", wantErr: "OPENAI_STATUS_BASE_URL must not include query or fragment"},
-		{name: "base url with fragment", key: "OPENAI_STATUS_BASE_URL", value: "https://status.openai.com#api", wantErr: "OPENAI_STATUS_BASE_URL must not include query or fragment"},
 		{name: "invalid log level", key: "LOG_LEVEL", value: "verbose", wantErr: "LOG_LEVEL must be one of"},
 	}
 
@@ -123,7 +128,6 @@ func setMinimalEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("TELEGRAM_BOT_TOKEN", "token")
 	t.Setenv("REDIS_URL", "")
-	t.Setenv("OPENAI_STATUS_BASE_URL", "")
 	t.Setenv("POLL_INTERVAL", "")
 	t.Setenv("HTTP_TIMEOUT", "")
 	t.Setenv("LOG_LEVEL", "")
