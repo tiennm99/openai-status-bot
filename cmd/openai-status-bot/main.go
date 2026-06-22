@@ -45,6 +45,9 @@ func main() {
 		logger.Error("delete telegram webhook", "error", err)
 		os.Exit(1)
 	}
+	if err := telegramClient.SetMyCommands(ctx, bot.MenuCommands()); err != nil {
+		logger.Warn("set telegram bot commands", "error", err)
+	}
 
 	botUsername := ""
 	if me, err := telegramClient.GetMe(ctx); err != nil {

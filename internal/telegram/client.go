@@ -85,6 +85,12 @@ func (c *Client) GetMe(ctx context.Context) (User, error) {
 	return user, nil
 }
 
+func (c *Client) SetMyCommands(ctx context.Context, commands []BotCommand) error {
+	payload := map[string]any{"commands": commands}
+	var result json.RawMessage
+	return c.postJSON(ctx, "/setMyCommands", payload, &result, c.requestTimeout)
+}
+
 func (c *Client) GetUpdates(ctx context.Context, offset int64, timeoutSeconds int) ([]Update, error) {
 	payload := map[string]any{
 		"offset":          offset,

@@ -11,6 +11,7 @@ Telegram bot that watches [OpenAI Status](https://status.openai.com/) every minu
 - Uses Redis for subscribers, delivery state, component checkpoints, and seen incident update versions
 - Supports Telegram supergroup topics via `message_thread_id`
 - Clears an existing Telegram webhook before long polling, for migration from webhook deployments
+- Registers the Telegram command menu on startup
 - Includes Docker Compose for local Redis + bot runtime
 
 ## Bot Commands

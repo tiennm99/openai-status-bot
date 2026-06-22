@@ -24,3 +24,8 @@ type User struct {
 	FirstName string `json:"first_name"`
 	Username  string `json:"username"`
 }
+
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}

@@ -59,6 +59,41 @@ func TestSendTextUsesHTMLAndDisablesPreview(t *testing.T) {
 	}
 }
 
+func TestSetMyCommandsRegistersCommands(t *testing.T) {
+	var gotPath string
+	var payload struct {
+		Commands []BotCommand `json:"commands"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, httpClient: server.Client()}
+	commands := []BotCommand{
+		{Command: "start", Description: "Subscribe"},
+		{Command: "status", Description: "Show status"},
+	}
+	if err := client.SetMyCommands(context.Background(), commands); err != nil {
+		t.Fatalf("SetMyCommands returned error: %v", err)
+	}
+	if gotPath != "/setMyCommands" {
+		t.Fatalf("path = %s", gotPath)
+	}
+	if len(payload.Commands) != len(commands) {
+		t.Fatalf("commands = %v, want %v", payload.Commands, commands)
+	}
+	for i := range commands {
+		if payload.Commands[i] != commands[i] {
+			t.Fatalf("commands[%d] = %+v, want %+v", i, payload.Commands[i], commands[i])
+		}
+	}
+}
+
 func TestIsTerminalSendError(t *testing.T) {
 	terminal := &APIError{StatusCode: 200, ErrorCode: 403, Description: "Forbidden: bot was blocked by the user"}
 	if !IsTerminalSendError(terminal) {
