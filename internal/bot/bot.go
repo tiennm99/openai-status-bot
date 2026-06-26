@@ -40,17 +40,13 @@ type Bot struct {
 	username       string
 }
 
-func New(telegramClient TelegramClient, statusClient StatusClient, store Store, logger *slog.Logger, username ...string) *Bot {
-	botUsername := ""
-	if len(username) > 0 {
-		botUsername = username[0]
-	}
+func New(telegramClient TelegramClient, statusClient StatusClient, store Store, logger *slog.Logger, username string) *Bot {
 	return &Bot{
 		telegramClient: telegramClient,
 		statusClient:   statusClient,
 		store:          store,
 		logger:         logger,
-		username:       botUsername,
+		username:       username,
 	}
 }
 

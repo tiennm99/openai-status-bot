@@ -46,6 +46,14 @@ func (e *deliveryError) addAll(other *deliveryError) {
 
 func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent, subscribers []redisstore.Subscriber, removed, failed map[string]bool) (*deliveryError, error) {
 	deliveryFailures := &deliveryError{}
+	var delivered map[string]bool
+	if event.deliveryKey != "" {
+		var err error
+		delivered, err = r.store.DeliveredSubscribers(ctx, event.deliveryKey)
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, subscriber := range subscribers {
 		subscriberKey := subscriber.Key()
 		if removed[subscriberKey] || failed[subscriberKey] {
@@ -54,14 +62,8 @@ func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent,
 		if !subscriber.Accepts(event.eventType, event.componentID, event.componentName) {
 			continue
 		}
-		if event.deliveryKey != "" {
-			delivered, err := r.store.HasDelivered(ctx, event.deliveryKey, subscriberKey)
-			if err != nil {
-				return nil, err
-			}
-			if delivered {
-				continue
-			}
+		if delivered[subscriberKey] {
+			continue
 		}
 		if err := r.notifier.SendMessage(ctx, subscriber, event.text); err != nil {
 			if telegram.IsTerminalSendError(err) {

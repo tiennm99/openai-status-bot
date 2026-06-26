@@ -61,11 +61,11 @@ func (f *fakePollerStore) ClearDelivery(_ context.Context, eventKey string) erro
 	return nil
 }
 
-func (f *fakePollerStore) HasDelivered(_ context.Context, eventKey, subscriberKey string) (bool, error) {
+func (f *fakePollerStore) DeliveredSubscribers(_ context.Context, eventKey string) (map[string]bool, error) {
 	if f.hasDeliveredErr != nil {
-		return false, f.hasDeliveredErr
+		return nil, f.hasDeliveredErr
 	}
-	return f.delivered[eventKey][subscriberKey], nil
+	return f.delivered[eventKey], nil
 }
 
 func (f *fakePollerStore) HasIncidentUpdateVersion(_ context.Context, updateID, version string) (bool, error) {
@@ -407,7 +407,7 @@ func TestPendingComponentDuplicateLabelsIncludeCurrentRename(t *testing.T) {
 		{ID: "c2", Name: "API", Status: "operational"},
 	}
 
-	duplicates := duplicateComponentNames(componentsForDuplicateLabels(components, pending))
+	duplicates := DuplicateComponentNames(componentsForDuplicateLabels(components, pending))
 	if !duplicates["API"] {
 		t.Fatalf("duplicates = %v, want current API rename counted as duplicate", duplicates)
 	}

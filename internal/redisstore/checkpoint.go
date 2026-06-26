@@ -115,8 +115,19 @@ func (s *Store) MarkIncidentUpdateVersion(ctx context.Context, updateID, version
 	return err
 }
 
-func (s *Store) HasDelivered(ctx context.Context, eventKey, subscriberKey string) (bool, error) {
-	return s.client.SIsMember(ctx, deliveryStateKey(eventKey), subscriberKey).Result()
+// DeliveredSubscribers returns the set of subscriber keys already notified for
+// eventKey. Callers fan a single event out to every subscriber, so one SMEMBERS
+// plus in-memory lookups replaces one SISMEMBER per subscriber.
+func (s *Store) DeliveredSubscribers(ctx context.Context, eventKey string) (map[string]bool, error) {
+	members, err := s.client.SMembers(ctx, deliveryStateKey(eventKey)).Result()
+	if err != nil {
+		return nil, err
+	}
+	delivered := make(map[string]bool, len(members))
+	for _, member := range members {
+		delivered[member] = true
+	}
+	return delivered, nil
 }
 
 func (s *Store) MarkDelivered(ctx context.Context, eventKey, subscriberKey string) error {

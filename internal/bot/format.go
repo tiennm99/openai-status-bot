@@ -33,13 +33,13 @@ func formatStatus(summary openai.Summary) string {
 		fmt.Sprintf("Overall: <code>%s</code>", escape(summary.Status.Description)),
 	}
 
-	duplicates := duplicateComponentNames(summary.Components)
+	duplicates := poller.DuplicateComponentNames(summary.Components)
 	degraded := make([]string, 0)
 	for _, component := range summary.Components {
 		if component.Group || component.Status == "operational" {
 			continue
 		}
-		degraded = append(degraded, fmt.Sprintf("- %s: <code>%s</code>", escape(componentLabel(component, duplicates[component.Name])), escape(poller.StatusLabel(component.Status))))
+		degraded = append(degraded, fmt.Sprintf("- %s: <code>%s</code>", escape(poller.ComponentLabel(component, duplicates[component.Name])), escape(poller.StatusLabel(component.Status))))
 	}
 
 	if len(degraded) == 0 {
@@ -56,7 +56,7 @@ func formatStatus(summary openai.Summary) string {
 func formatComponentStatus(component openai.Component, duplicate bool) string {
 	return fmt.Sprintf(
 		"<b>%s</b>\n\nStatus: <code>%s</code>\nLast change: %s UTC\n\n<a href=\"%s\">View full status page</a>",
-		escape(componentLabel(component, duplicate)),
+		escape(poller.ComponentLabel(component, duplicate)),
 		escape(poller.StatusLabel(component.Status)),
 		escape(formatTime(component.UpdatedAt)),
 		statusURL,
@@ -65,12 +65,12 @@ func formatComponentStatus(component openai.Component, duplicate bool) string {
 
 func formatComponents(summary openai.Summary) string {
 	lines := []string{"<b>OpenAI Components</b>", ""}
-	duplicates := duplicateComponentNames(summary.Components)
+	duplicates := poller.DuplicateComponentNames(summary.Components)
 	for _, component := range summary.Components {
 		if component.Group {
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("- %s: <code>%s</code>", escape(componentLabel(component, duplicates[component.Name])), escape(poller.StatusLabel(component.Status))))
+		lines = append(lines, fmt.Sprintf("- %s: <code>%s</code>", escape(poller.ComponentLabel(component, duplicates[component.Name])), escape(poller.StatusLabel(component.Status))))
 	}
 	return truncateMessage(strings.Join(lines, "\n"))
 }
@@ -99,7 +99,7 @@ func formatHistory(incidents []openai.Incident, count int) string {
 			escape(poller.StatusLabel(incident.Status)),
 		)
 		if link != "" {
-			entry += fmt.Sprintf("\n   <a href=\"%s\">Details</a>", escapeAttr(link))
+			entry += fmt.Sprintf("\n   <a href=\"%s\">Details</a>", escape(link))
 		}
 		lines = append(lines, entry)
 	}
@@ -109,14 +109,14 @@ func formatHistory(incidents []openai.Incident, count int) string {
 
 func formatUptime(summary openai.Summary) string {
 	lines := []string{"<b>OpenAI Component Health</b>", ""}
-	duplicates := duplicateComponentNames(summary.Components)
+	duplicates := poller.DuplicateComponentNames(summary.Components)
 	for _, component := range summary.Components {
 		if component.Group {
 			continue
 		}
 		lines = append(lines, fmt.Sprintf(
 			"%s\n   Status: <code>%s</code>\n   Last change: %s UTC",
-			escape(componentLabel(component, duplicates[component.Name])),
+			escape(poller.ComponentLabel(component, duplicates[component.Name])),
 			escape(poller.StatusLabel(component.Status)),
 			escape(formatTime(component.UpdatedAt)),
 		))
@@ -177,9 +177,5 @@ func emptyDefault(value, fallback string) string {
 }
 
 func escape(value string) string {
-	return html.EscapeString(value)
-}
-
-func escapeAttr(value string) string {
 	return html.EscapeString(value)
 }

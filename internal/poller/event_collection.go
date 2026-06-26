@@ -45,7 +45,7 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 		return nil, nil, nil, err
 	}
 
-	duplicates := duplicateComponentNames(componentsForDuplicateLabels(summary.Components, pending))
+	duplicates := DuplicateComponentNames(componentsForDuplicateLabels(summary.Components, pending))
 
 	events := make([]notificationEvent, 0)
 	before := make([]checkpoint, 0)
@@ -62,15 +62,7 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 			sortTime:      pendingEvent.UpdatedAt,
 			text:          FormatComponentChange(component, pendingEvent.PreviousStatus, duplicates[component.Name]),
 		})
-		after = append(after, func(ctx context.Context) error {
-			return r.store.SaveComponentStatus(ctx, pendingEvent.ComponentID, pendingEvent.Status)
-		})
-		after = append(after, func(ctx context.Context) error {
-			return r.store.RemovePendingComponentEvent(ctx, pendingEvent.ComponentID)
-		})
-		after = append(after, func(ctx context.Context) error {
-			return r.store.ClearDelivery(ctx, pendingEvent.DeliveryKey)
-		})
+		after = append(after, r.resolveComponentCheckpoints(pendingEvent.ComponentID, pendingEvent.Status, pendingEvent.DeliveryKey)...)
 	}
 
 	for _, component := range summary.Components {
@@ -120,17 +112,20 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 			sortTime:      component.UpdatedAt,
 			text:          FormatComponentChange(component, previousStatus, duplicates[component.Name]),
 		})
-		after = append(after, func(ctx context.Context) error {
-			return r.store.SaveComponentStatus(ctx, component.ID, component.Status)
-		})
-		after = append(after, func(ctx context.Context) error {
-			return r.store.RemovePendingComponentEvent(ctx, component.ID)
-		})
-		after = append(after, func(ctx context.Context) error {
-			return r.store.ClearDelivery(ctx, deliveryKey)
-		})
+		after = append(after, r.resolveComponentCheckpoints(component.ID, component.Status, deliveryKey)...)
 	}
 	return events, before, after, nil
+}
+
+// resolveComponentCheckpoints builds the post-delivery writes shared by pending
+// and freshly detected component events: persist the new status, drop the
+// pending marker, and clear the delivery-state set.
+func (r *Runner) resolveComponentCheckpoints(componentID, status, deliveryKey string) []checkpoint {
+	return []checkpoint{
+		func(ctx context.Context) error { return r.store.SaveComponentStatus(ctx, componentID, status) },
+		func(ctx context.Context) error { return r.store.RemovePendingComponentEvent(ctx, componentID) },
+		func(ctx context.Context) error { return r.store.ClearDelivery(ctx, deliveryKey) },
+	}
 }
 
 func (r *Runner) collectIncidentEvents(ctx context.Context, response openai.IncidentsResponse, initialized bool) ([]notificationEvent, []checkpoint, error) {
