@@ -56,13 +56,21 @@ func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent,
 	}
 	for _, subscriber := range subscribers {
 		subscriberKey := subscriber.Key()
-		if removed[subscriberKey] || failed[subscriberKey] {
+		if removed[subscriberKey] {
 			continue
 		}
 		if !subscriber.Accepts(event.eventType, event.componentID, event.componentName) {
 			continue
 		}
 		if delivered[subscriberKey] {
+			continue
+		}
+		if failed[subscriberKey] {
+			// This subscriber already hit a retryable failure earlier in the
+			// poll. Skip it to avoid hammering, but record this event as
+			// incomplete so its checkpoint is deferred and it retries next poll
+			// instead of being marked delivered to a subscriber that never got it.
+			deliveryFailures.add(fmt.Errorf("deferred %s after earlier failure", subscriberKey))
 			continue
 		}
 		if err := r.notifier.SendMessage(ctx, subscriber, event.text); err != nil {

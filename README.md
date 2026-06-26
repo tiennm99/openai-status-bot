@@ -81,7 +81,7 @@ The first successful poll seeds the database and does not send historical incide
 
 Switching from a prior Redis deployment starts from empty state: there is no data migration, so subscribers must re-issue `/start` and component checkpoints reseed on the first poll.
 
-Incident update dedupe tracks the update content/version, so edited Statuspage updates can notify again. Delivery is checkpointed after successful fan-out; retryable Telegram failures may be retried on a later poll without advancing the global checkpoint.
+Incident update dedupe tracks the update content/version, so edited Statuspage updates can notify again. Each event is checkpointed independently once it has fully fanned out, so a retryable Telegram failure on one event only defers that event for retry on a later poll and never blocks checkpoints for other events delivered in the same poll.
 
 A 7-day TTL index on the `delivery` collection expires per-event delivery markers automatically; the bot creates required indexes on startup.
 

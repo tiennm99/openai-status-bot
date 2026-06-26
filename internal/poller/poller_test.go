@@ -416,6 +416,39 @@ func TestPendingComponentDuplicateLabelsIncludeCurrentRename(t *testing.T) {
 	}
 }
 
+func TestCheckOnceCheckpointsDeliveredEventWhenSiblingEventFails(t *testing.T) {
+	// Regression: a fully-delivered event must checkpoint even when another
+	// event in the same poll fails to deliver. Previously any delivery failure
+	// aborted checkpoints for the whole batch, re-emitting delivered events.
+	store := newFakePollerStore()
+	store.initialized = true
+	store.componentStatuses["c1"] = "operational"
+	store.componentStatuses["c2"] = "operational"
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
+	// c1 (sorts first) succeeds; c2 fails for the same subscriber.
+	notifier := &fakeNotifier{errorQueue: map[string][]error{"1": {nil, errors.New("rate limit")}}}
+	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
+		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c2", Name: "ChatGPT", Status: "partial_outage", UpdatedAt: "2026-01-01T00:01:00Z"},
+	}}}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err == nil {
+		t.Fatal("expected delivery error from c2")
+	}
+	if got := store.savedComponents["c1"]; got != "degraded_performance" {
+		t.Fatalf("c1 checkpoint = %q, want delivered event checkpointed", got)
+	}
+	if got, ok := store.savedComponents["c2"]; ok {
+		t.Fatalf("c2 checkpoint = %q, want failed event NOT checkpointed", got)
+	}
+	if _, ok := store.pendingComponents["c2"]; !ok {
+		t.Fatal("c2 pending marker should persist for retry")
+	}
+	if _, ok := store.pendingComponents["c1"]; ok {
+		t.Fatal("c1 pending marker should be cleared after delivery")
+	}
+}
+
 func TestCheckOnceContinuesWhenMarkDeliveredFailsAfterSend(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true

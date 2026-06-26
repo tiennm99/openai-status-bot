@@ -50,6 +50,10 @@ type notificationEvent struct {
 	deliveryKey   string
 	sortTime      string
 	text          string
+	// checkpoints are the post-delivery store writes for this event. They run
+	// only after the event has fully delivered to every accepting subscriber,
+	// so an unrelated event's delivery failure cannot block them.
+	checkpoints []checkpoint
 }
 
 type checkpoint func(ctx context.Context) error
@@ -95,7 +99,7 @@ func (r *Runner) CheckOnce(ctx context.Context) error {
 		return err
 	}
 
-	events, beforeDelivery, checkpoints, err := r.collectEvents(ctx, summary, incidents, initialized)
+	events, beforeDelivery, baseline, err := r.collectEvents(ctx, summary, incidents, initialized)
 	if err != nil {
 		return err
 	}
@@ -119,15 +123,33 @@ func (r *Runner) CheckOnce(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			deliveryErr.addAll(failures)
+			if failures != nil {
+				// Event not fully delivered; defer its checkpoints so it is
+				// re-collected and retried on the next poll. Other events are
+				// unaffected.
+				deliveryErr.addAll(failures)
+				continue
+			}
+			if err := runCheckpoints(ctx, event.checkpoints); err != nil {
+				return err
+			}
+		}
+		if err := runCheckpoints(ctx, baseline); err != nil {
+			return err
 		}
 		if deliveryErr.count > 0 {
 			return deliveryErr
 		}
+		return nil
 	}
 
-	for _, save := range checkpoints {
-		if err := save(ctx); err != nil {
+	// Seeding, or nothing to deliver: run baseline writes and flush any event
+	// checkpoints (e.g. stale pending markers carried over from a prior run).
+	if err := runCheckpoints(ctx, baseline); err != nil {
+		return err
+	}
+	for _, event := range events {
+		if err := runCheckpoints(ctx, event.checkpoints); err != nil {
 			return err
 		}
 	}
@@ -136,6 +158,15 @@ func (r *Runner) CheckOnce(ctx context.Context) error {
 			return err
 		}
 		r.logger.Info("seeded status baseline")
+	}
+	return nil
+}
+
+func runCheckpoints(ctx context.Context, checkpoints []checkpoint) error {
+	for _, save := range checkpoints {
+		if err := save(ctx); err != nil {
+			return err
+		}
 	}
 	return nil
 }
