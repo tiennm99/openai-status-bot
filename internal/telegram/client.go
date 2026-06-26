@@ -15,6 +15,7 @@ import (
 
 type Client struct {
 	baseURL        string
+	token          string
 	httpClient     *http.Client
 	requestTimeout time.Duration
 }
@@ -66,6 +67,7 @@ func IsTerminalSendError(err error) bool {
 func NewClient(token string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL:        "https://api.telegram.org/bot" + token,
+		token:          token,
 		httpClient:     &http.Client{},
 		requestTimeout: timeout,
 	}
@@ -124,6 +126,20 @@ func (c *Client) SendText(ctx context.Context, chatID int64, threadID *int, text
 	return c.postJSON(ctx, "/sendMessage", payload, &result, c.requestTimeout)
 }
 
+// redactToken returns an error whose message has the bot token replaced with a
+// placeholder. It leaves the error untouched when no token is set or the token
+// does not appear in the message, so typed errors are preserved where possible.
+func (c *Client) redactToken(err error) error {
+	if err == nil || c.token == "" {
+		return err
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, c.token) {
+		return err
+	}
+	return errors.New(strings.ReplaceAll(msg, c.token, "<redacted>"))
+}
+
 func (c *Client) longPollRequestTimeout(timeoutSeconds int) time.Duration {
 	telegramWait := time.Duration(timeoutSeconds) * time.Second
 	if telegramWait < 0 {
@@ -160,7 +176,10 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any, target 
 	}
 	res, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		// Transport errors are *url.Error and embed the full request URL,
+		// which contains the bot token. Strip it before the error propagates
+		// to logs.
+		return c.redactToken(err)
 	}
 	defer res.Body.Close()
 

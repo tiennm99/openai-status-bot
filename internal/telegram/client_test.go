@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -165,6 +166,28 @@ func TestSendTextRejectsNonSuccessHTTPStatusEvenWhenEnvelopeOK(t *testing.T) {
 	}
 	if apiErr.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusTooManyRequests)
+	}
+}
+
+func TestTransportErrorRedactsBotToken(t *testing.T) {
+	const token = "123456:super-secret-token"
+	// Port 0 is reserved and never listens, forcing a transport-level dial
+	// error whose *url.Error message embeds the token-bearing URL.
+	client := &Client{
+		baseURL:        "http://127.0.0.1:0/bot" + token,
+		token:          token,
+		httpClient:     &http.Client{},
+		requestTimeout: time.Second,
+	}
+	err := client.SendText(context.Background(), 123, nil, "hello")
+	if err == nil {
+		t.Fatal("expected transport error, got nil")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("error leaked bot token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "<redacted>") {
+		t.Fatalf("error missing redaction placeholder: %v", err)
 	}
 }
 
