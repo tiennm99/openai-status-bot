@@ -6,7 +6,7 @@ import (
 	"time"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 )
 
 type StatusClient interface {
@@ -20,19 +20,19 @@ type Store interface {
 	DeliveredSubscribers(ctx context.Context, eventKey string) (map[string]bool, error)
 	HasIncidentUpdateVersion(ctx context.Context, updateID, version string) (bool, error)
 	IsInitialized(ctx context.Context) (bool, error)
-	ListSubscribers(ctx context.Context) ([]redisstore.Subscriber, error)
+	ListSubscribers(ctx context.Context) ([]mongostore.Subscriber, error)
 	MarkDelivered(ctx context.Context, eventKey, subscriberKey string) error
 	MarkIncidentUpdateVersion(ctx context.Context, updateID, version string) error
-	PendingComponentEvents(ctx context.Context) (map[string]redisstore.PendingComponentEvent, error)
+	PendingComponentEvents(ctx context.Context) (map[string]mongostore.PendingComponentEvent, error)
 	RemovePendingComponentEvent(ctx context.Context, componentID string) error
-	RemoveSubscriber(ctx context.Context, sub redisstore.Subscriber) error
-	SavePendingComponentEvent(ctx context.Context, event redisstore.PendingComponentEvent) error
+	RemoveSubscriber(ctx context.Context, sub mongostore.Subscriber) error
+	SavePendingComponentEvent(ctx context.Context, event mongostore.PendingComponentEvent) error
 	SaveComponentStatus(ctx context.Context, componentID, status string) error
 	SetInitialized(ctx context.Context) error
 }
 
 type Notifier interface {
-	SendMessage(ctx context.Context, sub redisstore.Subscriber, text string) error
+	SendMessage(ctx context.Context, sub mongostore.Subscriber, text string) error
 }
 
 type Runner struct {

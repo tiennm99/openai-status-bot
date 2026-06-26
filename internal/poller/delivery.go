@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
 
@@ -44,7 +44,7 @@ func (e *deliveryError) addAll(other *deliveryError) {
 	e.count += other.count
 }
 
-func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent, subscribers []redisstore.Subscriber, removed, failed map[string]bool) (*deliveryError, error) {
+func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent, subscribers []mongostore.Subscriber, removed, failed map[string]bool) (*deliveryError, error) {
 	deliveryFailures := &deliveryError{}
 	var delivered map[string]bool
 	if event.deliveryKey != "" {

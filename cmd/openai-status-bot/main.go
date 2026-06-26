@@ -7,14 +7,15 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/tiennm99/openai-status-bot/internal/bot"
 	"github.com/tiennm99/openai-status-bot/internal/config"
 	"github.com/tiennm99/openai-status-bot/internal/health"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
 	"github.com/tiennm99/openai-status-bot/internal/poller"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 func main() {
@@ -34,14 +35,26 @@ func main() {
 
 	go health.Run(ctx, logger)
 
-	redisClient := redis.NewClient(cfg.RedisOptions)
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Error("connect redis", "network", cfg.RedisOptions.Network, "addr", cfg.RedisOptions.Addr, "db", cfg.RedisOptions.DB, "tls", cfg.RedisOptions.TLSConfig != nil, "error", err)
+	mongoClient, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoURI))
+	if err != nil {
+		logger.Error("connect mongodb", "database", cfg.MongoDatabase, "error", err)
 		os.Exit(1)
 	}
-	defer redisClient.Close()
+	defer func() {
+		if err := mongoClient.Disconnect(context.Background()); err != nil {
+			logger.Warn("disconnect mongodb", "error", err)
+		}
+	}()
+	if err := mongoClient.Ping(ctx, nil); err != nil {
+		logger.Error("ping mongodb", "database", cfg.MongoDatabase, "error", err)
+		os.Exit(1)
+	}
 
-	store := redisstore.New(redisClient)
+	store := mongostore.New(mongoClient, cfg.MongoDatabase)
+	if err := store.EnsureIndexes(ctx); err != nil {
+		logger.Error("ensure mongodb indexes", "database", cfg.MongoDatabase, "error", err)
+		os.Exit(1)
+	}
 	statusClient := openai.NewClient(cfg.HTTPTimeout)
 	telegramClient := telegram.NewClient(cfg.TelegramBotToken, cfg.HTTPTimeout)
 	if err := telegramClient.DeleteWebhook(ctx); err != nil {

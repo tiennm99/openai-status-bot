@@ -6,12 +6,12 @@ import (
 	"strings"
 
 	"github.com/tiennm99/openai-status-bot/internal/poller"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
 
 func (b *Bot) replySubscribe(ctx context.Context, message telegram.Message, fields []string) {
-	sub := redisstore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
+	sub := mongostore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
 	current, subscribed, err := b.store.GetSubscriber(ctx, sub)
 	if err != nil {
 		b.logger.Error("get subscription", "error", err)
@@ -25,19 +25,19 @@ func (b *Bot) replySubscribe(ctx context.Context, message telegram.Message, fiel
 
 	args := fields[1:]
 	arg := strings.ToLower(args[0])
-	if arg == redisstore.SubscriptionTypeComponent && len(args) > 1 {
+	if arg == mongostore.SubscriptionTypeComponent && len(args) > 1 {
 		b.updateComponentFilter(ctx, message, sub, strings.Join(args[1:], " "), subscribed)
 		return
 	}
 
 	var types []string
 	switch arg {
-	case redisstore.SubscriptionTypeIncident:
-		types = []string{redisstore.SubscriptionTypeIncident}
-	case redisstore.SubscriptionTypeComponent:
-		types = []string{redisstore.SubscriptionTypeComponent}
+	case mongostore.SubscriptionTypeIncident:
+		types = []string{mongostore.SubscriptionTypeIncident}
+	case mongostore.SubscriptionTypeComponent:
+		types = []string{mongostore.SubscriptionTypeComponent}
 	case "all":
-		types = redisstore.DefaultSubscriptionTypes()
+		types = mongostore.DefaultSubscriptionTypes()
 	default:
 		b.reply(ctx, message, formatSubscribeUsage(currentOrTarget(current, sub, subscribed), subscribed))
 		return
@@ -56,7 +56,7 @@ func (b *Bot) replySubscribe(ctx context.Context, message telegram.Message, fiel
 	b.reply(ctx, message, fmt.Sprintf("Subscription updated: <code>%s</code>", escape(strings.Join(types, ", "))))
 }
 
-func (b *Bot) updateComponentFilter(ctx context.Context, message telegram.Message, sub redisstore.Subscriber, componentArg string, subscribed bool) {
+func (b *Bot) updateComponentFilter(ctx context.Context, message telegram.Message, sub mongostore.Subscriber, componentArg string, subscribed bool) {
 	if !subscribed {
 		b.reply(ctx, message, "Not subscribed yet. Use /start first.")
 		return
@@ -73,7 +73,7 @@ func (b *Bot) updateComponentFilter(ctx context.Context, message telegram.Messag
 			b.reply(ctx, message, "Not subscribed yet. Use /start first.")
 			return
 		}
-		updated, err := b.store.UpdateSubscriberSettings(ctx, sub, withSubscriptionType(current.Types, redisstore.SubscriptionTypeComponent), nil)
+		updated, err := b.store.UpdateSubscriberSettings(ctx, sub, withSubscriptionType(current.Types, mongostore.SubscriptionTypeComponent), nil)
 		if err != nil {
 			b.logger.Error("clear component filter", "error", err)
 			b.reply(ctx, message, "Could not update component filter right now.")
@@ -118,7 +118,7 @@ func (b *Bot) updateComponentFilter(ctx context.Context, message telegram.Messag
 	if !containsComponent(components, component.ID) {
 		components = append(components, component.ID)
 	}
-	types := withSubscriptionType(current.Types, redisstore.SubscriptionTypeComponent)
+	types := withSubscriptionType(current.Types, mongostore.SubscriptionTypeComponent)
 	updated, err := b.store.UpdateSubscriberSettings(ctx, sub, types, components)
 	if err != nil {
 		b.logger.Error("update component filter", "error", err)
@@ -161,7 +161,7 @@ func (b *Bot) replyUptime(ctx context.Context, message telegram.Message) {
 }
 
 func (b *Bot) replyInfo(ctx context.Context, message telegram.Message) {
-	sub := redisstore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
+	sub := mongostore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
 	current, subscribed, err := b.store.GetSubscriber(ctx, sub)
 	if err != nil {
 		b.logger.Error("get subscription info", "error", err)

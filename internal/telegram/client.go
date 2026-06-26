@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 )
 
 type Client struct {
@@ -105,7 +105,7 @@ func (c *Client) GetUpdates(ctx context.Context, offset int64, timeoutSeconds in
 	return updates, nil
 }
 
-func (c *Client) SendMessage(ctx context.Context, sub redisstore.Subscriber, text string) error {
+func (c *Client) SendMessage(ctx context.Context, sub mongostore.Subscriber, text string) error {
 	return c.SendText(ctx, sub.ChatID, sub.ThreadID, text)
 }
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/tiennm99/openai-status-bot/internal/poller"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
 
@@ -51,7 +51,7 @@ func (b *Bot) reply(ctx context.Context, message telegram.Message, text string) 
 	}
 }
 
-func currentOrTarget(current, target redisstore.Subscriber, subscribed bool) redisstore.Subscriber {
+func currentOrTarget(current, target mongostore.Subscriber, subscribed bool) mongostore.Subscriber {
 	if subscribed {
 		return current
 	}

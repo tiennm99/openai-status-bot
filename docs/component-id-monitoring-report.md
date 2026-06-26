@@ -18,9 +18,9 @@ Current decision: monitor next incidents/component updates before changing stora
 
 ## Findings
 
-- Component checkpoints are stored in Redis as `component_id -> last_status`.
-- Redis key: `openai-status:component-statuses`.
-- Component names are not stored in that checkpoint hash.
+- Component checkpoints are stored in MongoDB as `component_id -> last_status`.
+- MongoDB collection: `component_statuses` (document ID is component ID, `status` field holds the last seen status).
+- Component names are not stored in that checkpoint document.
 - Component names come from live OpenAI `summary.json` during each poll.
 - The bot compares component status by `component.ID`, then formats the alert with `component.Name`.
 - Incident `page_id` is not used to detect components.
@@ -35,21 +35,21 @@ If component ID changed:
 
 - Bot treats the component as new.
 - Previous status becomes `unknown`.
-- Old Redis component ID remains unused.
+- Old MongoDB component ID remains unused.
 - Component-filtered subscriptions using old ID may stop matching.
 - Unfiltered component subscriptions still receive updates.
 
 Other possible causes:
 
-- Redis checkpoint was cleared or partially lost.
-- `openai-status:initialized` exists while `openai-status:component-statuses` is missing entries.
+- MongoDB checkpoint was cleared or partially lost.
+- `meta` collection has `initialized` document while `component_statuses` collection is missing entries.
 - OpenAI added a new component.
 
 ## Current State
 
 - No code change now.
 - Monitor upcoming incidents and component updates.
-- Compare current OpenAI component IDs with stored Redis component IDs.
+- Compare current OpenAI component IDs with stored MongoDB component IDs (in `component_statuses` collection).
 - Decide later whether ID-only storage is enough.
 
 ## Future Options
@@ -62,5 +62,5 @@ Other possible causes:
 ## Unresolved Questions
 
 - Did OpenAI actually change the component ID?
-- Are old component IDs present in Redis but absent from current `summary.json`?
+- Are old component IDs present in MongoDB but absent from current `summary.json`?
 - Should component subscriptions survive ID changes by matching component name?

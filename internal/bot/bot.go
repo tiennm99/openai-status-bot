@@ -8,7 +8,7 @@ import (
 	"time"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
 
@@ -23,13 +23,13 @@ type StatusClient interface {
 }
 
 type Store interface {
-	AddSubscriber(ctx context.Context, sub redisstore.Subscriber) error
-	GetSubscriber(ctx context.Context, sub redisstore.Subscriber) (redisstore.Subscriber, bool, error)
-	RemoveSubscriber(ctx context.Context, sub redisstore.Subscriber) error
+	AddSubscriber(ctx context.Context, sub mongostore.Subscriber) error
+	GetSubscriber(ctx context.Context, sub mongostore.Subscriber) (mongostore.Subscriber, bool, error)
+	RemoveSubscriber(ctx context.Context, sub mongostore.Subscriber) error
 	SaveTelegramOffset(ctx context.Context, offset int64) error
 	TelegramOffset(ctx context.Context) (int64, error)
-	UpdateSubscriberSettings(ctx context.Context, sub redisstore.Subscriber, types, components []string) (bool, error)
-	UpdateSubscriberTypes(ctx context.Context, sub redisstore.Subscriber, types []string) (bool, error)
+	UpdateSubscriberSettings(ctx context.Context, sub mongostore.Subscriber, types, components []string) (bool, error)
+	UpdateSubscriberTypes(ctx context.Context, sub mongostore.Subscriber, types []string) (bool, error)
 }
 
 type Bot struct {
@@ -125,7 +125,7 @@ func (b *Bot) handleMessage(ctx context.Context, message telegram.Message) {
 }
 
 func (b *Bot) subscribe(ctx context.Context, message telegram.Message) {
-	sub := redisstore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
+	sub := mongostore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
 	if err := b.store.AddSubscriber(ctx, sub); err != nil {
 		b.logger.Error("subscribe", "error", err)
 		b.reply(ctx, message, "Could not subscribe right now.")
@@ -135,7 +135,7 @@ func (b *Bot) subscribe(ctx context.Context, message telegram.Message) {
 }
 
 func (b *Bot) unsubscribe(ctx context.Context, message telegram.Message) {
-	sub := redisstore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
+	sub := mongostore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
 	if err := b.store.RemoveSubscriber(ctx, sub); err != nil {
 		b.logger.Error("unsubscribe", "error", err)
 		b.reply(ctx, message, "Could not unsubscribe right now.")

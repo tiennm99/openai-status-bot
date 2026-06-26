@@ -1,21 +1,11 @@
+# Development runtime: bot only, connecting to the shared Atlas cluster.
+# There is no local datastore; set MONGODB_URI in .env. This file targets the
+# development database (the MONGODB_DATABASE below overrides any .env value).
 services:
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "127.0.0.1:6379:6379"
-    volumes:
-      - redis-data:/data
-    command: ["redis-server", "--appendonly", "yes"]
-
   bot:
     build: .
     env_file:
       - .env
     environment:
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      - redis
+      MONGODB_DATABASE: openai_status_bot_dev
     restart: unless-stopped
-
-volumes:
-  redis-data:

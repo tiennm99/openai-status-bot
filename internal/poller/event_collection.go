@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 )
 
 func (r *Runner) collectEvents(ctx context.Context, summary openai.Summary, incidents openai.IncidentsResponse, initialized bool) ([]notificationEvent, []checkpoint, []checkpoint, error) {
@@ -55,7 +55,7 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 		pendingEvent := pendingEvent
 		component := pendingComponent(pendingEvent)
 		events = append(events, notificationEvent{
-			eventType:     redisstore.SubscriptionTypeComponent,
+			eventType:     mongostore.SubscriptionTypeComponent,
 			componentID:   pendingEvent.ComponentID,
 			componentName: pendingEvent.ComponentName,
 			deliveryKey:   pendingEvent.DeliveryKey,
@@ -92,7 +92,7 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 		}
 
 		deliveryKey := fmt.Sprintf("component:%s:%s:%s", component.ID, component.Status, component.UpdatedAt)
-		pendingEvent := redisstore.PendingComponentEvent{
+		pendingEvent := mongostore.PendingComponentEvent{
 			ComponentID:    component.ID,
 			ComponentName:  component.Name,
 			Status:         component.Status,
@@ -105,7 +105,7 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 			return r.store.SavePendingComponentEvent(ctx, pendingEvent)
 		})
 		events = append(events, notificationEvent{
-			eventType:     redisstore.SubscriptionTypeComponent,
+			eventType:     mongostore.SubscriptionTypeComponent,
 			componentID:   component.ID,
 			componentName: component.Name,
 			deliveryKey:   deliveryKey,
@@ -151,7 +151,7 @@ func (r *Runner) collectIncidentEvents(ctx context.Context, response openai.Inci
 			deliveryKey := fmt.Sprintf("incident:%s:%s", update.ID, version)
 			if initialized && !seen {
 				events = append(events, notificationEvent{
-					eventType:   redisstore.SubscriptionTypeIncident,
+					eventType:   mongostore.SubscriptionTypeIncident,
 					deliveryKey: deliveryKey,
 					sortTime:    incidentUpdateSortTime(update),
 					text:        FormatIncidentUpdate(incident, update),
@@ -165,7 +165,7 @@ func (r *Runner) collectIncidentEvents(ctx context.Context, response openai.Inci
 	return events, checkpoints, nil
 }
 
-func pendingComponent(event redisstore.PendingComponentEvent) openai.Component {
+func pendingComponent(event mongostore.PendingComponentEvent) openai.Component {
 	return openai.Component{
 		ID:        event.ComponentID,
 		Name:      event.ComponentName,
@@ -175,7 +175,7 @@ func pendingComponent(event redisstore.PendingComponentEvent) openai.Component {
 	}
 }
 
-func componentsForDuplicateLabels(components []openai.Component, pending map[string]redisstore.PendingComponentEvent) []openai.Component {
+func componentsForDuplicateLabels(components []openai.Component, pending map[string]mongostore.PendingComponentEvent) []openai.Component {
 	result := make([]openai.Component, 0, len(components)+len(pending))
 	seen := map[string]bool{}
 	add := func(component openai.Component) {

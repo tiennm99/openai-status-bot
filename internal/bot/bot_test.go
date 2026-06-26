@@ -9,7 +9,7 @@ import (
 	"time"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
 
@@ -44,23 +44,23 @@ func (f fakeBotStatusClient) FetchIncidents(context.Context) (openai.IncidentsRe
 }
 
 type fakeBotStore struct {
-	sub        redisstore.Subscriber
+	sub        mongostore.Subscriber
 	subscribed bool
 	types      []string
 	components []string
 	offsetErr  error
 }
 
-func (f *fakeBotStore) AddSubscriber(_ context.Context, sub redisstore.Subscriber) error {
+func (f *fakeBotStore) AddSubscriber(_ context.Context, sub mongostore.Subscriber) error {
 	f.sub = sub
 	f.subscribed = true
-	f.types = redisstore.DefaultSubscriptionTypes()
+	f.types = mongostore.DefaultSubscriptionTypes()
 	return nil
 }
 
-func (f *fakeBotStore) GetSubscriber(context.Context, redisstore.Subscriber) (redisstore.Subscriber, bool, error) {
+func (f *fakeBotStore) GetSubscriber(context.Context, mongostore.Subscriber) (mongostore.Subscriber, bool, error) {
 	if !f.subscribed {
-		return redisstore.Subscriber{}, false, nil
+		return mongostore.Subscriber{}, false, nil
 	}
 	sub := f.sub
 	sub.Types = append([]string{}, f.types...)
@@ -68,7 +68,7 @@ func (f *fakeBotStore) GetSubscriber(context.Context, redisstore.Subscriber) (re
 	return sub, true, nil
 }
 
-func (f *fakeBotStore) RemoveSubscriber(context.Context, redisstore.Subscriber) error {
+func (f *fakeBotStore) RemoveSubscriber(context.Context, mongostore.Subscriber) error {
 	f.subscribed = false
 	return nil
 }
@@ -76,7 +76,7 @@ func (f *fakeBotStore) RemoveSubscriber(context.Context, redisstore.Subscriber) 
 func (f *fakeBotStore) SaveTelegramOffset(context.Context, int64) error { return nil }
 func (f *fakeBotStore) TelegramOffset(context.Context) (int64, error)   { return 0, f.offsetErr }
 
-func (f *fakeBotStore) UpdateSubscriberTypes(_ context.Context, _ redisstore.Subscriber, types []string) (bool, error) {
+func (f *fakeBotStore) UpdateSubscriberTypes(_ context.Context, _ mongostore.Subscriber, types []string) (bool, error) {
 	if !f.subscribed {
 		return false, nil
 	}
@@ -84,7 +84,7 @@ func (f *fakeBotStore) UpdateSubscriberTypes(_ context.Context, _ redisstore.Sub
 	return true, nil
 }
 
-func (f *fakeBotStore) UpdateSubscriberSettings(_ context.Context, _ redisstore.Subscriber, types, components []string) (bool, error) {
+func (f *fakeBotStore) UpdateSubscriberSettings(_ context.Context, _ mongostore.Subscriber, types, components []string) (bool, error) {
 	if !f.subscribed {
 		return false, nil
 	}
@@ -96,15 +96,15 @@ func (f *fakeBotStore) UpdateSubscriberSettings(_ context.Context, _ redisstore.
 func TestSubscribeComponentStoresComponentID(t *testing.T) {
 	bot, store, tg := newTestBot([]openai.Component{{ID: "c-api", Name: "API", Status: "operational"}})
 	store.subscribed = true
-	store.sub = redisstore.NewSubscriber(123, nil)
-	store.types = []string{redisstore.SubscriptionTypeIncident}
+	store.sub = mongostore.NewSubscriber(123, nil)
+	store.types = []string{mongostore.SubscriptionTypeIncident}
 
 	bot.handleMessage(context.Background(), messageText("/subscribe component api"))
 
 	if len(store.components) != 1 || store.components[0] != "c-api" {
 		t.Fatalf("components = %v, want [c-api]", store.components)
 	}
-	if !containsComponent(store.types, redisstore.SubscriptionTypeComponent) {
+	if !containsComponent(store.types, mongostore.SubscriptionTypeComponent) {
 		t.Fatalf("types = %v, want component enabled", store.types)
 	}
 	if len(tg.replies) != 1 || !strings.Contains(tg.replies[0], "Subscribed to component") {
@@ -115,8 +115,8 @@ func TestSubscribeComponentStoresComponentID(t *testing.T) {
 func TestSubscribeComponentAllEnablesComponentType(t *testing.T) {
 	bot, store, _ := newTestBot(nil)
 	store.subscribed = true
-	store.sub = redisstore.NewSubscriber(123, nil)
-	store.types = []string{redisstore.SubscriptionTypeIncident}
+	store.sub = mongostore.NewSubscriber(123, nil)
+	store.types = []string{mongostore.SubscriptionTypeIncident}
 	store.components = []string{"c-api"}
 
 	bot.handleMessage(context.Background(), messageText("/subscribe component all"))
@@ -124,7 +124,7 @@ func TestSubscribeComponentAllEnablesComponentType(t *testing.T) {
 	if len(store.components) != 0 {
 		t.Fatalf("components = %v, want cleared", store.components)
 	}
-	if !containsComponent(store.types, redisstore.SubscriptionTypeComponent) {
+	if !containsComponent(store.types, mongostore.SubscriptionTypeComponent) {
 		t.Fatalf("types = %v, want component enabled", store.types)
 	}
 }
