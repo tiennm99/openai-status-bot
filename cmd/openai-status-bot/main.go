@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
+	tgbot "github.com/go-telegram/bot"
 	"github.com/tiennm99/openai-status-bot/internal/bot"
 	"github.com/tiennm99/openai-status-bot/internal/config"
 	"github.com/tiennm99/openai-status-bot/internal/health"
@@ -70,31 +74,92 @@ func main() {
 		os.Exit(1)
 	}
 	statusClient := openai.NewClient(cfg.HTTPTimeout)
-	telegramClient := telegram.NewClient(cfg.TelegramBotToken, cfg.HTTPTimeout)
-	if err := telegramClient.DeleteWebhook(ctx); err != nil {
-		logger.Error("delete telegram webhook", "error", err)
+
+	telegramOffset, err := store.TelegramOffset(ctx)
+	if err != nil {
+		logger.Error("load telegram offset", "error", err)
 		os.Exit(1)
 	}
-	if err := telegramClient.SetMyCommands(ctx, bot.MenuCommands()); err != nil {
-		logger.Warn("set telegram bot commands", "error", err)
+
+	telegramPollTimeout := 51 * time.Second
+	telegramOptions := []tgbot.Option{
+		tgbot.WithSkipGetMe(),
+		tgbot.WithAllowedUpdates(tgbot.AllowedUpdates{"message"}),
+		tgbot.WithWorkers(1),
+		tgbot.WithUpdatesChannelCap(1),
+		tgbot.WithNotAsyncHandlers(),
+		tgbot.WithHTTPClient(telegramPollTimeout, &http.Client{Timeout: telegramPollTimeout + cfg.HTTPTimeout}),
+		tgbot.WithErrorsHandler(func(err error) {
+			logger.Warn("telegram runtime", "error", redactTelegramRuntimeError(cfg.TelegramBotToken, err))
+		}),
+	}
+	if initialOffset, ok := frameworkInitialOffset(telegramOffset); ok {
+		telegramOptions = append(telegramOptions, tgbot.WithInitialOffset(initialOffset))
+	}
+
+	telegramBot, err := tgbot.New(cfg.TelegramBotToken, telegramOptions...)
+	if err != nil {
+		logger.Error("create telegram bot", "error", redactTelegramRuntimeError(cfg.TelegramBotToken, err))
+		os.Exit(1)
+	}
+	requestCtx, cancelRequest := contextWithOptionalTimeout(ctx, cfg.HTTPTimeout)
+	_, err = telegramBot.DeleteWebhook(requestCtx, &tgbot.DeleteWebhookParams{DropPendingUpdates: false})
+	cancelRequest()
+	if err != nil {
+		logger.Error("delete telegram webhook", "error", redactTelegramRuntimeError(cfg.TelegramBotToken, err))
+		os.Exit(1)
+	}
+
+	requestCtx, cancelRequest = contextWithOptionalTimeout(ctx, cfg.HTTPTimeout)
+	_, err = telegramBot.SetMyCommands(requestCtx, &tgbot.SetMyCommandsParams{Commands: bot.MenuCommands()})
+	cancelRequest()
+	if err != nil {
+		logger.Warn("set telegram bot commands", "error", redactTelegramRuntimeError(cfg.TelegramBotToken, err))
 	}
 
 	botUsername := ""
-	if me, err := telegramClient.GetMe(ctx); err != nil {
-		logger.Warn("get telegram bot profile", "error", err)
+	requestCtx, cancelRequest = contextWithOptionalTimeout(ctx, cfg.HTTPTimeout)
+	me, err := telegramBot.GetMe(requestCtx)
+	cancelRequest()
+	if err != nil {
+		logger.Warn("get telegram bot profile", "error", redactTelegramRuntimeError(cfg.TelegramBotToken, err))
 	} else {
 		botUsername = me.Username
 	}
 
-	statusPoller := poller.NewRunner(statusClient, store, telegramClient, cfg.PollInterval, logger)
-	commandBot := bot.New(telegramClient, statusClient, store, logger, botUsername)
+	telegramSender := telegram.NewSender(telegramBot, cfg.TelegramBotToken, cfg.HTTPTimeout)
+	commandApp := bot.New(telegramSender, statusClient, store, logger, botUsername)
+	commandApp.RegisterHandlers(telegramBot)
+	statusPoller := poller.NewRunner(statusClient, store, telegramSender, cfg.PollInterval, logger)
 
 	go statusPoller.Run(ctx)
 
 	ready.Store(true)
-	logger.Info("openai status bot started", "poll_interval", cfg.PollInterval.String())
-	if err := commandBot.Run(ctx); err != nil && ctx.Err() == nil {
-		logger.Error("telegram bot stopped", "error", err)
-		os.Exit(1)
+	logger.Info("openai status bot started", "poll_interval", cfg.PollInterval.String(), "telegram_offset", telegramOffset)
+	telegramBot.Start(ctx)
+}
+
+func redactTelegramRuntimeError(token string, err error) error {
+	if err == nil || token == "" {
+		return err
 	}
+	msg := err.Error()
+	if !strings.Contains(msg, token) {
+		return err
+	}
+	return errors.New(strings.ReplaceAll(msg, token, "<redacted>"))
+}
+
+func contextWithOptionalTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func frameworkInitialOffset(nextOffset int64) (int64, bool) {
+	if nextOffset <= 0 {
+		return 0, false
+	}
+	return nextOffset - 1, true
 }

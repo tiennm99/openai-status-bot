@@ -1,9 +1,9 @@
 package bot
 
-import "github.com/tiennm99/openai-status-bot/internal/telegram"
+import "github.com/go-telegram/bot/models"
 
-func MenuCommands() []telegram.BotCommand {
-	return []telegram.BotCommand{
+func MenuCommands() []models.BotCommand {
+	return []models.BotCommand{
 		{Command: "start", Description: "Subscribe this chat or topic"},
 		{Command: "stop", Description: "Unsubscribe this chat or topic"},
 		{Command: "status", Description: "Show current OpenAI status"},

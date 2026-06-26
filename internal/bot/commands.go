@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tiennm99/openai-status-bot/internal/poller"
 	"github.com/tiennm99/openai-status-bot/internal/mongostore"
-	"github.com/tiennm99/openai-status-bot/internal/telegram"
+	"github.com/tiennm99/openai-status-bot/internal/poller"
 )
 
-func (b *Bot) replySubscribe(ctx context.Context, message telegram.Message, fields []string) {
-	sub := mongostore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
+func (b *App) replySubscribe(ctx context.Context, message MessageContext, fields []string) {
+	sub := mongostore.NewSubscriber(message.ChatID, message.ThreadID)
 	current, subscribed, err := b.store.GetSubscriber(ctx, sub)
 	if err != nil {
 		b.logger.Error("get subscription", "error", err)
@@ -56,7 +55,7 @@ func (b *Bot) replySubscribe(ctx context.Context, message telegram.Message, fiel
 	b.reply(ctx, message, fmt.Sprintf("Subscription updated: <code>%s</code>", escape(strings.Join(types, ", "))))
 }
 
-func (b *Bot) updateComponentFilter(ctx context.Context, message telegram.Message, sub mongostore.Subscriber, componentArg string, subscribed bool) {
+func (b *App) updateComponentFilter(ctx context.Context, message MessageContext, sub mongostore.Subscriber, componentArg string, subscribed bool) {
 	if !subscribed {
 		b.reply(ctx, message, "Not subscribed yet. Use /start first.")
 		return
@@ -140,7 +139,7 @@ func withSubscriptionType(types []string, subscriptionType string) []string {
 	return updated
 }
 
-func (b *Bot) replyHistory(ctx context.Context, message telegram.Message, count int) {
+func (b *App) replyHistory(ctx context.Context, message MessageContext, count int) {
 	incidents, err := b.statusClient.FetchIncidents(ctx)
 	if err != nil {
 		b.logger.Error("fetch incidents", "error", err)
@@ -150,7 +149,7 @@ func (b *Bot) replyHistory(ctx context.Context, message telegram.Message, count 
 	b.reply(ctx, message, formatHistory(incidents.Incidents, count))
 }
 
-func (b *Bot) replyUptime(ctx context.Context, message telegram.Message) {
+func (b *App) replyUptime(ctx context.Context, message MessageContext) {
 	summary, err := b.statusClient.FetchSummary(ctx)
 	if err != nil {
 		b.logger.Error("fetch uptime", "error", err)
@@ -160,8 +159,8 @@ func (b *Bot) replyUptime(ctx context.Context, message telegram.Message) {
 	b.reply(ctx, message, formatUptime(summary))
 }
 
-func (b *Bot) replyInfo(ctx context.Context, message telegram.Message) {
-	sub := mongostore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
+func (b *App) replyInfo(ctx context.Context, message MessageContext) {
+	sub := mongostore.NewSubscriber(message.ChatID, message.ThreadID)
 	current, subscribed, err := b.store.GetSubscriber(ctx, sub)
 	if err != nil {
 		b.logger.Error("get subscription info", "error", err)

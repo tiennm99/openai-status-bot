@@ -3,6 +3,7 @@ module github.com/tiennm99/openai-status-bot
 go 1.25.0
 
 require (
+	github.com/go-telegram/bot v1.21.0
 	github.com/testcontainers/testcontainers-go/modules/mongodb v0.43.0
 	go.mongodb.org/mongo-driver/v2 v2.7.0
 )

@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tiennm99/openai-status-bot/internal/poller"
 	"github.com/tiennm99/openai-status-bot/internal/mongostore"
-	"github.com/tiennm99/openai-status-bot/internal/telegram"
+	"github.com/tiennm99/openai-status-bot/internal/poller"
 )
 
-func (b *Bot) replyStatus(ctx context.Context, message telegram.Message, fields []string) {
+func (b *App) replyStatus(ctx context.Context, message MessageContext, fields []string) {
 	summary, err := b.statusClient.FetchSummary(ctx)
 	if err != nil {
 		b.logger.Error("fetch status", "error", err)
@@ -35,7 +34,7 @@ func (b *Bot) replyStatus(ctx context.Context, message telegram.Message, fields 
 	b.reply(ctx, message, formatStatus(summary))
 }
 
-func (b *Bot) replyComponents(ctx context.Context, message telegram.Message) {
+func (b *App) replyComponents(ctx context.Context, message MessageContext) {
 	summary, err := b.statusClient.FetchSummary(ctx)
 	if err != nil {
 		b.logger.Error("fetch components", "error", err)
@@ -45,9 +44,9 @@ func (b *Bot) replyComponents(ctx context.Context, message telegram.Message) {
 	b.reply(ctx, message, formatComponents(summary))
 }
 
-func (b *Bot) reply(ctx context.Context, message telegram.Message, text string) {
-	if err := b.telegramClient.SendText(ctx, message.Chat.ID, message.MessageThreadID, text); err != nil {
-		b.logger.Warn("send telegram reply", "chat_id", message.Chat.ID, "error", err)
+func (b *App) reply(ctx context.Context, message MessageContext, text string) {
+	if err := b.sender.SendText(ctx, message.ChatID, message.ThreadID, text); err != nil {
+		b.logger.Warn("send telegram reply", "chat_id", message.ChatID, "error", err)
 	}
 }
 
