@@ -33,12 +33,23 @@ func (s *Store) loadExistingSubscriberSettings(ctx context.Context, key string) 
 func (s *Store) loadSubscriberSettings(ctx context.Context, key string) (subscriberSettings, error) {
 	value, err := s.client.HGet(ctx, subscriberSettingsKey, key).Result()
 	if err == redis.Nil {
-		return defaultSubscriberSettings(), nil
+		return s.resolveSubscriberSettings(ctx, key, "", false)
 	}
 	if err != nil {
 		return subscriberSettings{}, err
 	}
+	return s.resolveSubscriberSettings(ctx, key, value, true)
+}
 
+// resolveSubscriberSettings turns a raw settings hash value into decoded
+// settings. It lets callers that already hold the value (e.g. a batched
+// HGETALL in ListSubscribers) reuse the same decode/default/self-heal logic as
+// the single-key HGET path. Absent or corrupt values fall back to defaults,
+// dropping the corrupt field so it heals on next write.
+func (s *Store) resolveSubscriberSettings(ctx context.Context, key, value string, present bool) (subscriberSettings, error) {
+	if !present {
+		return defaultSubscriberSettings(), nil
+	}
 	settings, err := decodeSubscriberSettings(key, value)
 	if err == nil {
 		return settings, nil

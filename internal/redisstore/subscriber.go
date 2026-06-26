@@ -97,15 +97,30 @@ func (s *Store) ListSubscribers(ctx context.Context) ([]Subscriber, error) {
 		return nil, err
 	}
 
+	// Fetch every subscriber's settings in one HGETALL instead of one HGET per
+	// key. The settings hash mirrors the subscribers set, so its size is the
+	// subscriber count rather than unbounded history.
+	settingsByKey, err := s.client.HGetAll(ctx, subscriberSettingsKey).Result()
+	if err != nil {
+		return nil, err
+	}
+
 	subscribers := make([]Subscriber, 0, len(keys))
 	for _, key := range keys {
-		sub, ok, err := s.loadSubscriber(ctx, key)
+		sub, err := ParseSubscriberKey(key)
+		if err != nil {
+			if removeErr := s.client.SRem(ctx, subscribersKey, key).Err(); removeErr != nil {
+				return nil, fmt.Errorf("remove malformed subscriber key %q: %w", key, removeErr)
+			}
+			return nil, fmt.Errorf("malformed subscriber key %q: %w", key, err)
+		}
+		value, present := settingsByKey[key]
+		settings, err := s.resolveSubscriberSettings(ctx, key, value, present)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			continue
-		}
+		sub.Types = settings.Types
+		sub.Components = settings.Components
 		subscribers = append(subscribers, sub)
 	}
 	return subscribers, nil
