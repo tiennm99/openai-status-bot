@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tiennm99/openai-status-bot/internal/poller"
 	"github.com/tiennm99/openai-status-bot/internal/redisstore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
@@ -27,7 +28,7 @@ func (b *Bot) replyStatus(ctx context.Context, message telegram.Message, fields 
 			b.reply(ctx, message, formatAmbiguousComponents(query, resolution.Matches))
 			return
 		}
-		duplicates := duplicateComponentNames(summary.Components)
+		duplicates := poller.DuplicateComponentNames(summary.Components)
 		b.reply(ctx, message, formatComponentStatus(resolution.Component, duplicates[resolution.Component.Name]))
 		return
 	}

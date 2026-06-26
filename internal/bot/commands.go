@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tiennm99/openai-status-bot/internal/poller"
 	"github.com/tiennm99/openai-status-bot/internal/redisstore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
@@ -128,7 +129,7 @@ func (b *Bot) updateComponentFilter(ctx context.Context, message telegram.Messag
 		b.reply(ctx, message, "Not subscribed yet. Use /start first.")
 		return
 	}
-	b.reply(ctx, message, fmt.Sprintf("Subscribed to component: <code>%s</code>\nActive filters: <code>%s</code>", escape(componentLabel(component, duplicateComponentNames(summary.Components)[component.Name])), escape(componentFilterLabels(summary.Components, components))))
+	b.reply(ctx, message, fmt.Sprintf("Subscribed to component: <code>%s</code>\nActive filters: <code>%s</code>", escape(poller.ComponentLabel(component, poller.DuplicateComponentNames(summary.Components)[component.Name])), escape(componentFilterLabels(summary.Components, components))))
 }
 
 func withSubscriptionType(types []string, subscriptionType string) []string {

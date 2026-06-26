@@ -11,7 +11,7 @@ import (
 func FormatComponentChange(component openai.Component, previousStatus string, duplicate bool) string {
 	return fmt.Sprintf(
 		"<b>OpenAI component update</b>\n\nComponent: <b>%s</b>\nStatus: <code>%s</code> -&gt; <code>%s</code>\n\n<a href=\"https://status.openai.com/\">View full status page</a>",
-		escape(componentLabel(component, duplicate)),
+		escape(ComponentLabel(component, duplicate)),
 		escape(StatusLabel(previousStatus)),
 		escape(StatusLabel(component.Status)),
 	)
@@ -75,7 +75,9 @@ func StatusLabel(value string) string {
 	}
 }
 
-func duplicateComponentNames(components []openai.Component) map[string]bool {
+// DuplicateComponentNames reports which non-group component names appear more
+// than once, so labels can disambiguate them with a short ID suffix.
+func DuplicateComponentNames(components []openai.Component) map[string]bool {
 	counts := map[string]int{}
 	for _, component := range components {
 		if component.Group {
@@ -90,14 +92,16 @@ func duplicateComponentNames(components []openai.Component) map[string]bool {
 	return duplicates
 }
 
-func componentLabel(component openai.Component, duplicate bool) string {
+// ComponentLabel renders a component's display name, appending a short ID when
+// the name collides with another component.
+func ComponentLabel(component openai.Component, duplicate bool) string {
 	if !duplicate || component.ID == "" {
 		return component.Name
 	}
-	return fmt.Sprintf("%s (ID: %s)", component.Name, shortID(component.ID))
+	return fmt.Sprintf("%s (ID: %s)", component.Name, ShortID(component.ID))
 }
 
-func shortID(value string) string {
+func ShortID(value string) string {
 	if len(value) <= 8 {
 		return value
 	}

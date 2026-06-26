@@ -17,7 +17,7 @@ type StatusClient interface {
 type Store interface {
 	ComponentStatuses(ctx context.Context) (map[string]string, error)
 	ClearDelivery(ctx context.Context, eventKey string) error
-	HasDelivered(ctx context.Context, eventKey, subscriberKey string) (bool, error)
+	DeliveredSubscribers(ctx context.Context, eventKey string) (map[string]bool, error)
 	HasIncidentUpdateVersion(ctx context.Context, updateID, version string) (bool, error)
 	IsInitialized(ctx context.Context) (bool, error)
 	ListSubscribers(ctx context.Context) ([]redisstore.Subscriber, error)
