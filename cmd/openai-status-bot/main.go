@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/tiennm99/openai-status-bot/internal/bot"
@@ -33,9 +35,21 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go health.Run(ctx, logger)
+	// The health endpoint comes up immediately but reports 503 until startup
+	// finishes, then pings MongoDB on each probe so a dependency outage is
+	// reflected instead of a static 200.
+	var (
+		ready       atomic.Bool
+		mongoClient *mongo.Client
+	)
+	go health.Run(ctx, logger, func(ctx context.Context) error {
+		if !ready.Load() {
+			return errors.New("bot is still starting")
+		}
+		return mongoClient.Ping(ctx, nil)
+	})
 
-	mongoClient, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoURI))
+	mongoClient, err = mongo.Connect(options.Client().ApplyURI(cfg.MongoURI))
 	if err != nil {
 		logger.Error("connect mongodb", "database", cfg.MongoDatabase, "error", err)
 		os.Exit(1)
@@ -77,6 +91,7 @@ func main() {
 
 	go statusPoller.Run(ctx)
 
+	ready.Store(true)
 	logger.Info("openai status bot started", "poll_interval", cfg.PollInterval.String())
 	if err := commandBot.Run(ctx); err != nil && ctx.Err() == nil {
 		logger.Error("telegram bot stopped", "error", err)
