@@ -7,5 +7,5 @@ services:
     env_file:
       - .env
     environment:
-      MONGODB_DATABASE: openai_status_bot_dev
+      MONGODB_DATABASE: development
     restart: unless-stopped
