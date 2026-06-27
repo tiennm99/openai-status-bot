@@ -22,7 +22,7 @@ const (
 	maxPollInterval      = time.Hour
 	minHTTPTimeout       = time.Second
 	maxHTTPTimeout       = 5 * time.Minute
-	defaultMongoDatabase = "openai_status_bot"
+	defaultMongoDatabase = "openai-status-bot"
 )
 
 func LoadFromEnv() (Config, error) {

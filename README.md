@@ -37,7 +37,7 @@ a managed MongoDB Atlas cluster, so a reachable `MONGODB_URI` is required to
 start. The development and production setups share one cluster and differ only
 by database name (`MONGODB_DATABASE`).
 
-Production runtime (default Compose file; uses the `MONGODB_DATABASE` from `.env`, default `openai_status_bot`):
+Production runtime (default Compose file; uses the `MONGODB_DATABASE` from `.env`, default `openai-status-bot`):
 
 ```bash
 cp .env.example .env
@@ -45,7 +45,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Development runtime (targets the `development` database):
+Development runtime (targets the `openai-status-bot-development` database):
 
 ```bash
 cp .env.example .env
@@ -66,7 +66,7 @@ go run ./cmd/openai-status-bot
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | required | Telegram bot token from BotFather |
 | `MONGODB_URI` | required | MongoDB connection string, e.g. an Atlas `mongodb+srv://user:pass@cluster/` URI |
-| `MONGODB_DATABASE` | `openai_status_bot` | Database name; use a separate name (e.g. `development`) to split dev and prod on one cluster |
+| `MONGODB_DATABASE` | `openai-status-bot` | Database name; use a separate name (e.g. `openai-status-bot-development`) to split dev and prod on one cluster |
 | `POLL_INTERVAL` | `1m` | Status check interval, valid `5s`-`1h` |
 | `HTTP_TIMEOUT` | `10s` | HTTP request timeout, valid `1s`-`5m` |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`/`warning`, or `error` |

@@ -32,14 +32,14 @@ func TestLoadFromEnvDefaultsAndTrimming(t *testing.T) {
 
 func TestLoadFromEnvAcceptsCustomMongoDatabase(t *testing.T) {
 	setMinimalEnv(t)
-	t.Setenv("MONGODB_DATABASE", " openai_status_bot_dev ")
+	t.Setenv("MONGODB_DATABASE", " openai-status-bot-development ")
 
 	cfg, err := LoadFromEnv()
 	if err != nil {
 		t.Fatalf("LoadFromEnv returned error: %v", err)
 	}
-	if cfg.MongoDatabase != "openai_status_bot_dev" {
-		t.Fatalf("MongoDatabase = %q, want openai_status_bot_dev", cfg.MongoDatabase)
+	if cfg.MongoDatabase != "openai-status-bot-development" {
+		t.Fatalf("MongoDatabase = %q, want openai-status-bot-development", cfg.MongoDatabase)
 	}
 }
 

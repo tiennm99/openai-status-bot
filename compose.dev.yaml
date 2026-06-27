@@ -1,11 +1,11 @@
 # Development runtime: bot only, connecting to the shared Atlas cluster.
 # There is no local datastore; set MONGODB_URI in .env. This file targets the
-# development database (the MONGODB_DATABASE below overrides any .env value).
+# openai-status-bot-development database (overrides any .env value).
 services:
   bot:
     build: .
     env_file:
       - .env
     environment:
-      MONGODB_DATABASE: development
+      MONGODB_DATABASE: openai-status-bot-development
     restart: unless-stopped

@@ -41,7 +41,7 @@ The service uses Telegram `getUpdates` through `github.com/go-telegram/bot`, so 
 
 `telegramOffset` stores the next update ID to resume from. Because `go-telegram/bot` stores the last seen update internally and sends `lastUpdateID + 1` to Telegram, startup passes `telegramOffset - 1` as the initial framework offset when a saved offset exists. The command handler saves `update.ID + 1` after every message update, including non-command messages.
 
-MongoDB is configured with `MONGODB_URI` and `MONGODB_DATABASE` (default `openai_status_bot`). The OpenAI status source is fixed to `https://status.openai.com`. Docker Compose starts the bot connecting to a managed MongoDB Atlas cluster; there is no bundled local MongoDB service.
+MongoDB is configured with `MONGODB_URI` and `MONGODB_DATABASE` (production default `openai-status-bot`; development Compose override `openai-status-bot-development`). The OpenAI status source is fixed to `https://status.openai.com`. Docker Compose starts the bot connecting to a managed MongoDB Atlas cluster; there is no bundled local MongoDB service.
 
 ## Failure Behavior
 

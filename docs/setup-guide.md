@@ -12,7 +12,7 @@
 cp .env.example .env
 # set TELEGRAM_BOT_TOKEN in .env
 # set MONGODB_URI to your MongoDB Atlas connection string
-# docker compose sets MONGODB_DATABASE=development for local development
+# docker compose sets MONGODB_DATABASE=openai-status-bot-development for local development
 docker compose -f compose.dev.yaml up --build
 ```
 
@@ -26,7 +26,7 @@ Use this for production deployment:
 cp .env.example .env
 # set TELEGRAM_BOT_TOKEN in .env
 # set MONGODB_URI to your MongoDB Atlas connection string
-# MONGODB_DATABASE defaults to openai_status_bot (production)
+# MONGODB_DATABASE defaults to openai-status-bot (production)
 docker compose up -d --build
 ```
 
@@ -37,7 +37,7 @@ cp .env.example .env
 # set TELEGRAM_BOT_TOKEN in .env
 # set MONGODB_URI to your MongoDB Atlas connection string
 # export TELEGRAM_BOT_TOKEN or source .env with your shell workflow
-# MONGODB_DATABASE defaults to openai_status_bot
+# MONGODB_DATABASE defaults to openai-status-bot
 go run ./cmd/openai-status-bot
 ```
 
