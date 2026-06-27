@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	tgbot "github.com/go-telegram/bot"
+	tgmodels "github.com/go-telegram/bot/models"
 	"github.com/tiennm99/openai-status-bot/internal/bot"
 	"github.com/tiennm99/openai-status-bot/internal/config"
 	"github.com/tiennm99/openai-status-bot/internal/health"
@@ -23,6 +26,11 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
+
+type telegramWebhookManager interface {
+	DeleteWebhook(context.Context, *tgbot.DeleteWebhookParams) (bool, error)
+	GetWebhookInfo(context.Context) (*tgmodels.WebhookInfo, error)
+}
 
 func main() {
 	cfg, err := config.LoadFromEnv()
@@ -103,7 +111,7 @@ func main() {
 		os.Exit(1)
 	}
 	requestCtx, cancelRequest := contextWithOptionalTimeout(ctx, cfg.HTTPTimeout)
-	_, err = telegramBot.DeleteWebhook(requestCtx, &tgbot.DeleteWebhookParams{DropPendingUpdates: false})
+	err = clearTelegramWebhook(requestCtx, telegramBot)
 	cancelRequest()
 	if err != nil {
 		logger.Error("delete telegram webhook", "error", redactTelegramRuntimeError(cfg.TelegramBotToken, err))
@@ -162,4 +170,34 @@ func frameworkInitialOffset(nextOffset int64) (int64, bool) {
 		return 0, false
 	}
 	return nextOffset - 1, true
+}
+
+func clearTelegramWebhook(ctx context.Context, telegramBot telegramWebhookManager) error {
+	_, err := telegramBot.DeleteWebhook(ctx, &tgbot.DeleteWebhookParams{DropPendingUpdates: false})
+	if err == nil {
+		return nil
+	}
+	if !isDeleteWebhookEmptyResponseError(err) {
+		return err
+	}
+
+	info, infoErr := telegramBot.GetWebhookInfo(ctx)
+	if infoErr != nil {
+		return fmt.Errorf("deleteWebhook returned an empty response and getWebhookInfo failed: %w", errors.Join(err, infoErr))
+	}
+	if info == nil {
+		return fmt.Errorf("deleteWebhook returned an empty response and getWebhookInfo returned no webhook info: %w", err)
+	}
+	if info.URL != "" {
+		return fmt.Errorf("deleteWebhook returned an empty response and webhook is still configured: %w", err)
+	}
+	return nil
+}
+
+func isDeleteWebhookEmptyResponseError(err error) bool {
+	var syntaxErr *json.SyntaxError
+	if !errors.As(err, &syntaxErr) {
+		return false
+	}
+	return strings.Contains(err.Error(), "error decode response body for method deleteWebhook, ,")
 }
