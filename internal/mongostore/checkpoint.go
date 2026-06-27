@@ -3,6 +3,9 @@ package mongostore
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -166,7 +169,7 @@ func (s *Store) ClearDelivery(ctx context.Context, eventKey string) error {
 
 func (s *Store) TelegramOffset(ctx context.Context) (int64, error) {
 	var doc struct {
-		Value int64 `bson:"value"`
+		Value any `bson:"value"`
 	}
 	err := s.meta.FindOne(ctx, bson.M{"_id": metaTelegramOffsetID}).Decode(&doc)
 	if errors.Is(err, mongo.ErrNoDocuments) {
@@ -175,7 +178,30 @@ func (s *Store) TelegramOffset(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return doc.Value, nil
+	offset, ok := parseTelegramOffsetValue(doc.Value)
+	if ok {
+		return offset, nil
+	}
+	if _, err := s.meta.DeleteOne(ctx, bson.M{"_id": metaTelegramOffsetID}); err != nil {
+		return 0, fmt.Errorf("clear invalid telegram offset: %w", err)
+	}
+	return 0, nil
+}
+
+func parseTelegramOffsetValue(value any) (int64, bool) {
+	switch value := value.(type) {
+	case int:
+		return int64(value), true
+	case int32:
+		return int64(value), true
+	case int64:
+		return value, true
+	case string:
+		offset, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+		return offset, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func (s *Store) SaveTelegramOffset(ctx context.Context, offset int64) error {

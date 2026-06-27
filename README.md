@@ -79,7 +79,7 @@ The bot always reads OpenAI status from `https://status.openai.com`.
 
 The first successful poll seeds the database and does not send historical incidents. Notifications start from later changes.
 
-Switching from a prior Redis deployment starts from empty state: there is no data migration, so subscribers must re-issue `/start` and component checkpoints reseed on the first poll.
+Switching from a prior Redis deployment starts from empty state: there is no data migration, so subscribers must re-issue `/start`, component checkpoints reseed on the first poll, and the stored Telegram update offset is not migrated, so retained Telegram updates can be reprocessed once after cutover.
 
 Incident update dedupe tracks the update content/version, so edited Statuspage updates can notify again. Each event is checkpointed independently once it has fully fanned out, so a retryable Telegram failure on one event only defers that event for retry on a later poll and never blocks checkpoints for other events delivered in the same poll.
 

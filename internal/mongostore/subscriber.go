@@ -23,11 +23,11 @@ type Subscriber struct {
 // subscriber key), mirroring the Redis design where the key held identity and a
 // separate hash held settings; chatID/threadID are denormalized for inspection.
 type subscriberDoc struct {
-	ID         string   `bson:"_id"`
-	ChatID     int64    `bson:"chatID"`
-	ThreadID   *int     `bson:"threadID,omitempty"`
-	Types      []string `bson:"types"`
-	Components []string `bson:"components"`
+	ID         string `bson:"_id"`
+	ChatID     int64  `bson:"chatID"`
+	ThreadID   *int   `bson:"threadID,omitempty"`
+	Types      any    `bson:"types"`
+	Components any    `bson:"components"`
 }
 
 func NewSubscriber(chatID int64, threadID *int) Subscriber {
@@ -180,7 +180,9 @@ func (s *Store) setSubscriberFields(ctx context.Context, key string, fields bson
 }
 
 // subscriberFromDoc derives identity from the document _id (so a malformed key
-// self-heals as it did under Redis) and normalizes the stored settings.
+// self-heals as it did under Redis) and normalizes the stored settings. Corrupt
+// or missing settings fields are rewritten to defaults so one malformed
+// document cannot block subscriber fan-out.
 func (s *Store) subscriberFromDoc(ctx context.Context, doc subscriberDoc) (Subscriber, error) {
 	sub, err := ParseSubscriberKey(doc.ID)
 	if err != nil {
@@ -189,7 +191,66 @@ func (s *Store) subscriberFromDoc(ctx context.Context, doc subscriberDoc) (Subsc
 		}
 		return Subscriber{}, fmt.Errorf("malformed subscriber key %q: %w", doc.ID, err)
 	}
-	sub.Types = normalizeTypes(doc.Types)
-	sub.Components = normalizeComponents(doc.Components)
+
+	types, healTypes := normalizeStoredTypes(doc.Types)
+	components, healComponents := normalizeStoredComponents(doc.Components)
+	if healTypes || healComponents {
+		fields := bson.M{}
+		if healTypes {
+			fields["types"] = types
+		}
+		if healComponents {
+			fields["components"] = components
+		}
+		if _, err := s.subscribers.UpdateOne(ctx, bson.M{"_id": doc.ID}, bson.M{"$set": fields}); err != nil {
+			return Subscriber{}, fmt.Errorf("heal malformed subscriber settings %q: %w", doc.ID, err)
+		}
+	}
+
+	sub.Types = types
+	sub.Components = components
 	return sub, nil
+}
+
+func normalizeStoredTypes(value any) ([]string, bool) {
+	values, ok := storedStringSlice(value)
+	if !ok {
+		return DefaultSubscriptionTypes(), true
+	}
+	return normalizeTypes(values), false
+}
+
+func normalizeStoredComponents(value any) ([]string, bool) {
+	values, ok := storedStringSlice(value)
+	if !ok {
+		return []string{}, true
+	}
+	return normalizeComponents(values), false
+}
+
+func storedStringSlice(value any) ([]string, bool) {
+	switch value := value.(type) {
+	case nil:
+		return nil, false
+	case []string:
+		return append([]string(nil), value...), true
+	case bson.A:
+		return stringsFromAnySlice([]any(value))
+	case []any:
+		return stringsFromAnySlice(value)
+	default:
+		return nil, false
+	}
+}
+
+func stringsFromAnySlice(values []any) ([]string, bool) {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		text, ok := value.(string)
+		if !ok {
+			return nil, false
+		}
+		result = append(result, text)
+	}
+	return result, true
 }

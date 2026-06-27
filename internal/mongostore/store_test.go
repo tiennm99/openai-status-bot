@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -29,6 +30,15 @@ var (
 // testMongo starts the shared mongod container once, then hands each test a
 // Store bound to a unique database that is dropped on cleanup.
 func testMongo(t *testing.T) *Store {
+	t.Helper()
+	store := testMongoWithoutIndexes(t)
+	if err := store.EnsureIndexes(context.Background()); err != nil {
+		t.Fatalf("EnsureIndexes: %v", err)
+	}
+	return store
+}
+
+func testMongoWithoutIndexes(t *testing.T) *Store {
 	t.Helper()
 	ctx := context.Background()
 
@@ -58,11 +68,7 @@ func testMongo(t *testing.T) *Store {
 		_ = db.Drop(context.Background())
 	})
 
-	store := New(sharedClient, dbName)
-	if err := store.EnsureIndexes(ctx); err != nil {
-		t.Fatalf("EnsureIndexes: %v", err)
-	}
-	return store
+	return New(sharedClient, dbName)
 }
 
 func TestAddAndGetSubscriber(t *testing.T) {
@@ -111,6 +117,25 @@ func TestAddSubscriberPreservesSettingsOnReStart(t *testing.T) {
 	}
 }
 
+func TestRemoveSubscriberDeletesDocument(t *testing.T) {
+	ctx := context.Background()
+	store := testMongo(t)
+	sub := NewSubscriber(123, nil)
+	if err := store.AddSubscriber(ctx, sub); err != nil {
+		t.Fatalf("AddSubscriber: %v", err)
+	}
+	if err := store.RemoveSubscriber(ctx, sub); err != nil {
+		t.Fatalf("RemoveSubscriber: %v", err)
+	}
+	_, exists, err := store.GetSubscriber(ctx, sub)
+	if err != nil {
+		t.Fatalf("GetSubscriber after remove: %v", err)
+	}
+	if exists {
+		t.Fatal("subscriber still exists after remove")
+	}
+}
+
 func TestGetSubscriberMissingReturnsFalse(t *testing.T) {
 	ctx := context.Background()
 	store := testMongo(t)
@@ -147,6 +172,64 @@ func TestListSubscribersSelfHealsMalformedKey(t *testing.T) {
 	}
 }
 
+func TestListSubscribersSelfHealsMalformedSettings(t *testing.T) {
+	ctx := context.Background()
+	store := testMongo(t)
+	if _, err := store.subscribers.InsertOne(ctx, bson.M{
+		"_id":        "2",
+		"chatID":     int64(2),
+		"types":      "not-an-array",
+		"components": bson.A{123},
+	}); err != nil {
+		t.Fatalf("insert malformed subscriber settings: %v", err)
+	}
+
+	subs, err := store.ListSubscribers(ctx)
+	if err != nil {
+		t.Fatalf("ListSubscribers: %v", err)
+	}
+	if len(subs) != 1 || subs[0].Key() != "2" {
+		t.Fatalf("subscribers = %v, want key 2", subs)
+	}
+	if len(subs[0].Types) != 2 || len(subs[0].Components) != 0 {
+		t.Fatalf("settings = types %v components %v, want defaults", subs[0].Types, subs[0].Components)
+	}
+
+	var raw bson.M
+	if err := store.subscribers.FindOne(ctx, bson.M{"_id": "2"}).Decode(&raw); err != nil {
+		t.Fatalf("load healed subscriber: %v", err)
+	}
+	types, ok := storedStringSlice(raw["types"])
+	if !ok || len(normalizeTypes(types)) != 2 {
+		t.Fatalf("healed types = %v ok=%v, want defaults", raw["types"], ok)
+	}
+	components, ok := storedStringSlice(raw["components"])
+	if !ok || len(components) != 0 {
+		t.Fatalf("healed components = %v ok=%v, want empty", raw["components"], ok)
+	}
+}
+
+func TestGetSubscriberSelfHealsMalformedSettings(t *testing.T) {
+	ctx := context.Background()
+	store := testMongo(t)
+	if _, err := store.subscribers.InsertOne(ctx, bson.M{
+		"_id":        "3",
+		"chatID":     int64(3),
+		"types":      bson.A{"incident"},
+		"components": int32(42),
+	}); err != nil {
+		t.Fatalf("insert malformed subscriber settings: %v", err)
+	}
+
+	got, exists, err := store.GetSubscriber(ctx, NewSubscriber(3, nil))
+	if err != nil || !exists {
+		t.Fatalf("GetSubscriber exists=%v err=%v", exists, err)
+	}
+	if len(got.Types) != 1 || got.Types[0] != SubscriptionTypeIncident || len(got.Components) != 0 {
+		t.Fatalf("settings = types %v components %v, want incident and empty components", got.Types, got.Components)
+	}
+}
+
 func TestUpdateSubscriberSettingsMatchedVsMissing(t *testing.T) {
 	ctx := context.Background()
 	store := testMongo(t)
@@ -169,6 +252,38 @@ func TestUpdateSubscriberSettingsMatchedVsMissing(t *testing.T) {
 	}
 	if !updated {
 		t.Fatal("updated = false for existing subscriber, want true")
+	}
+}
+
+func TestUpdateSubscriberTypesMatchedVsMissing(t *testing.T) {
+	ctx := context.Background()
+	store := testMongo(t)
+	sub := NewSubscriber(1, nil)
+
+	updated, err := store.UpdateSubscriberTypes(ctx, sub, []string{SubscriptionTypeComponent})
+	if err != nil {
+		t.Fatalf("UpdateSubscriberTypes missing: %v", err)
+	}
+	if updated {
+		t.Fatal("updated = true for missing subscriber, want false")
+	}
+
+	if err := store.AddSubscriber(ctx, sub); err != nil {
+		t.Fatalf("AddSubscriber: %v", err)
+	}
+	updated, err = store.UpdateSubscriberTypes(ctx, sub, []string{" COMPONENT ", "invalid"})
+	if err != nil {
+		t.Fatalf("UpdateSubscriberTypes existing: %v", err)
+	}
+	if !updated {
+		t.Fatal("updated = false for existing subscriber, want true")
+	}
+	got, _, err := store.GetSubscriber(ctx, sub)
+	if err != nil {
+		t.Fatalf("GetSubscriber: %v", err)
+	}
+	if len(got.Types) != 1 || got.Types[0] != SubscriptionTypeComponent {
+		t.Fatalf("Types = %v, want normalized [component]", got.Types)
 	}
 }
 
@@ -260,6 +375,15 @@ func TestDeliveryDedupAndClear(t *testing.T) {
 	if err := store.MarkDelivered(ctx, "evt1", "sub-b"); err != nil {
 		t.Fatalf("MarkDelivered: %v", err)
 	}
+	var marker struct {
+		ExpiresAt time.Time `bson:"expiresAt"`
+	}
+	if err := store.delivery.FindOne(ctx, bson.M{"_id": "evt1|sub-a"}).Decode(&marker); err != nil {
+		t.Fatalf("load delivery marker: %v", err)
+	}
+	if marker.ExpiresAt.Before(time.Now().Add(deliveryTTL-time.Minute)) || marker.ExpiresAt.After(time.Now().Add(deliveryTTL+time.Minute)) {
+		t.Fatalf("expiresAt = %s, want about %s from now", marker.ExpiresAt, deliveryTTL)
+	}
 	delivered, err := store.DeliveredSubscribers(ctx, "evt1")
 	if err != nil {
 		t.Fatalf("DeliveredSubscribers: %v", err)
@@ -282,6 +406,26 @@ func TestDeliveryDedupAndClear(t *testing.T) {
 func TestDeliveryTTLIndexExists(t *testing.T) {
 	ctx := context.Background()
 	store := testMongo(t)
+	assertDeliveryTTLIndex(t, ctx, store, int64(deliveryTTLIndexExpireAfterSeconds))
+}
+
+func TestEnsureIndexesReplacesLegacyDeliveryTTLIndex(t *testing.T) {
+	ctx := context.Background()
+	store := testMongoWithoutIndexes(t)
+	if _, err := store.delivery.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "expiresAt", Value: 1}},
+		Options: options.Index().SetExpireAfterSeconds(604800),
+	}); err != nil {
+		t.Fatalf("create legacy TTL index: %v", err)
+	}
+	if err := store.EnsureIndexes(ctx); err != nil {
+		t.Fatalf("EnsureIndexes: %v", err)
+	}
+	assertDeliveryTTLIndex(t, ctx, store, int64(deliveryTTLIndexExpireAfterSeconds))
+}
+
+func assertDeliveryTTLIndex(t *testing.T, ctx context.Context, store *Store, want int64) {
+	t.Helper()
 	cursor, err := store.delivery.Indexes().List(ctx)
 	if err != nil {
 		t.Fatalf("list indexes: %v", err)
@@ -292,19 +436,22 @@ func TestDeliveryTTLIndexExists(t *testing.T) {
 	}
 	found := false
 	for _, idx := range indexes {
-		if expire, ok := idx["expireAfterSeconds"]; ok {
-			if asInt(expire) == 604800 {
-				found = true
-			}
+		if !isExpiresAtIndex(idx["key"]) {
+			continue
+		}
+		if asInt(idx["expireAfterSeconds"]) == want {
+			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("no TTL index with expireAfterSeconds=604800 in %v", indexes)
+		t.Fatalf("no expiresAt TTL index with expireAfterSeconds=%d in %v", want, indexes)
 	}
 }
 
 func asInt(v any) int64 {
 	switch n := v.(type) {
+	case int:
+		return int64(n)
 	case int32:
 		return int64(n)
 	case int64:
@@ -335,6 +482,43 @@ func TestTelegramOffsetRoundTrip(t *testing.T) {
 	}
 	if offset != 42 {
 		t.Fatalf("offset = %d, want 42", offset)
+	}
+}
+
+func TestTelegramOffsetAcceptsStringValue(t *testing.T) {
+	ctx := context.Background()
+	store := testMongo(t)
+	if _, err := store.meta.InsertOne(ctx, bson.M{"_id": metaTelegramOffsetID, "value": "42"}); err != nil {
+		t.Fatalf("insert string offset: %v", err)
+	}
+	offset, err := store.TelegramOffset(ctx)
+	if err != nil {
+		t.Fatalf("TelegramOffset: %v", err)
+	}
+	if offset != 42 {
+		t.Fatalf("offset = %d, want 42", offset)
+	}
+}
+
+func TestTelegramOffsetSelfHealsInvalidValue(t *testing.T) {
+	ctx := context.Background()
+	store := testMongo(t)
+	if _, err := store.meta.InsertOne(ctx, bson.M{"_id": metaTelegramOffsetID, "value": "bad"}); err != nil {
+		t.Fatalf("insert invalid offset: %v", err)
+	}
+	offset, err := store.TelegramOffset(ctx)
+	if err != nil {
+		t.Fatalf("TelegramOffset: %v", err)
+	}
+	if offset != 0 {
+		t.Fatalf("offset = %d, want 0", offset)
+	}
+	count, err := store.meta.CountDocuments(ctx, bson.M{"_id": metaTelegramOffsetID})
+	if err != nil {
+		t.Fatalf("CountDocuments: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("invalid offset doc count = %d, want 0", count)
 	}
 }
 

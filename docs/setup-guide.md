@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - MongoDB Atlas cluster (managed, no local MongoDB service required)
 - Telegram bot token from BotFather
 
