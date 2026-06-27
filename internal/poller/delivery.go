@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
 
@@ -44,7 +44,7 @@ func (e *deliveryError) addAll(other *deliveryError) {
 	e.count += other.count
 }
 
-func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent, subscribers []redisstore.Subscriber, removed, failed map[string]bool) (*deliveryError, error) {
+func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent, subscribers []mongostore.Subscriber, removed, failed map[string]bool) (*deliveryError, error) {
 	deliveryFailures := &deliveryError{}
 	var delivered map[string]bool
 	if event.deliveryKey != "" {
@@ -56,13 +56,21 @@ func (r *Runner) notifySubscribers(ctx context.Context, event notificationEvent,
 	}
 	for _, subscriber := range subscribers {
 		subscriberKey := subscriber.Key()
-		if removed[subscriberKey] || failed[subscriberKey] {
+		if removed[subscriberKey] {
 			continue
 		}
 		if !subscriber.Accepts(event.eventType, event.componentID, event.componentName) {
 			continue
 		}
 		if delivered[subscriberKey] {
+			continue
+		}
+		if failed[subscriberKey] {
+			// This subscriber already hit a retryable failure earlier in the
+			// poll. Skip it to avoid hammering, but record this event as
+			// incomplete so its checkpoint is deferred and it retries next poll
+			// instead of being marked delivered to a subscriber that never got it.
+			deliveryFailures.add(fmt.Errorf("deferred %s after earlier failure", subscriberKey))
 			continue
 		}
 		if err := r.notifier.SendMessage(ctx, subscriber, event.text); err != nil {

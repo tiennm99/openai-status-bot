@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 )
 
-func formatInfo(sub redisstore.Subscriber, subscribed bool) string {
+func formatInfo(sub mongostore.Subscriber, subscribed bool) string {
 	chatID := strconv.FormatInt(sub.ChatID, 10)
 	if sub.ThreadID != nil {
 		chatID = fmt.Sprintf("%s:%d", chatID, *sub.ThreadID)
@@ -28,7 +28,7 @@ func formatInfo(sub redisstore.Subscriber, subscribed bool) string {
 	)
 }
 
-func formatSubscribeUsage(sub redisstore.Subscriber, subscribed bool) string {
+func formatSubscribeUsage(sub mongostore.Subscriber, subscribed bool) string {
 	current := "none (use /start first)"
 	components := "all"
 	if subscribed {

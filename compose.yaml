@@ -1,0 +1,9 @@
+# Default production runtime: bot only, connecting to the shared Atlas cluster via .env.
+# Uses the production database (MONGODB_DATABASE in .env, default
+# openai_status_bot). There is no local datastore.
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    restart: unless-stopped

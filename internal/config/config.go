@@ -6,25 +6,23 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type Config struct {
 	TelegramBotToken string
-	RedisOptions     *redis.Options
+	MongoURI         string
+	MongoDatabase    string
 	PollInterval     time.Duration
 	HTTPTimeout      time.Duration
 	LogLevel         slog.Level
 }
 
 const (
-	minPollInterval = 5 * time.Second
-	maxPollInterval = time.Hour
-	minHTTPTimeout  = time.Second
-	maxHTTPTimeout  = 5 * time.Minute
-	minRedisDB      = 0
-	maxRedisDB      = 15
+	minPollInterval      = 5 * time.Second
+	maxPollInterval      = time.Hour
+	minHTTPTimeout       = time.Second
+	maxHTTPTimeout       = 5 * time.Minute
+	defaultMongoDatabase = "openai_status_bot"
 )
 
 func LoadFromEnv() (Config, error) {
@@ -34,12 +32,13 @@ func LoadFromEnv() (Config, error) {
 	if cfg.TelegramBotToken == "" {
 		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is required")
 	}
-	var err error
-	cfg.RedisOptions, err = parseRedisURL("REDIS_URL", getEnv("REDIS_URL", "redis://localhost:6379/0"))
-	if err != nil {
-		return Config{}, err
+	cfg.MongoURI = strings.TrimSpace(os.Getenv("MONGODB_URI"))
+	if cfg.MongoURI == "" {
+		return Config{}, fmt.Errorf("MONGODB_URI is required")
 	}
+	cfg.MongoDatabase = getEnv("MONGODB_DATABASE", defaultMongoDatabase)
 
+	var err error
 	cfg.PollInterval, err = parseDurationEnv("POLL_INTERVAL", time.Minute, minPollInterval, maxPollInterval)
 	if err != nil {
 		return Config{}, err
@@ -76,17 +75,6 @@ func parseDurationEnv(key string, fallback, minValue, maxValue time.Duration) (t
 		return 0, fmt.Errorf("%s must be between %s and %s", key, minValue, maxValue)
 	}
 	return parsed, nil
-}
-
-func parseRedisURL(key, value string) (*redis.Options, error) {
-	options, err := redis.ParseURL(value)
-	if err != nil {
-		return nil, fmt.Errorf("%s must be a valid Redis URL", key)
-	}
-	if options.DB < minRedisDB || options.DB > maxRedisDB {
-		return nil, fmt.Errorf("%s database must be between %d and %d", key, minRedisDB, maxRedisDB)
-	}
-	return options, nil
 }
 
 func parseLogLevel(value string) (slog.Level, error) {

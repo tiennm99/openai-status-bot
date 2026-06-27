@@ -8,15 +8,22 @@ import (
 	"strings"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 )
 
+// collectEvents returns the events to deliver this poll plus two checkpoint
+// groups: `before` writes run unconditionally before delivery (pending
+// markers), and `baseline` writes run unconditionally after delivery (seeding
+// saves and unchanged-status re-saves). Each event carries its OWN
+// after-delivery checkpoints in event.checkpoints, which run only once that
+// event has fully delivered — so a delivery failure for one event no longer
+// blocks checkpoints for unrelated events.
 func (r *Runner) collectEvents(ctx context.Context, summary openai.Summary, incidents openai.IncidentsResponse, initialized bool) ([]notificationEvent, []checkpoint, []checkpoint, error) {
-	componentEvents, componentBefore, componentAfter, err := r.collectComponentEvents(ctx, summary, initialized)
+	componentEvents, before, componentBaseline, err := r.collectComponentEvents(ctx, summary, initialized)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	incidentEvents, incidentAfter, err := r.collectIncidentEvents(ctx, incidents, initialized)
+	incidentEvents, incidentBaseline, err := r.collectIncidentEvents(ctx, incidents, initialized)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -31,8 +38,8 @@ func (r *Runner) collectEvents(ctx context.Context, summary openai.Summary, inci
 		}
 		return events[i].sortTime < events[j].sortTime
 	})
-	after := append(componentAfter, incidentAfter...)
-	return events, componentBefore, after, nil
+	baseline := append(componentBaseline, incidentBaseline...)
+	return events, before, baseline, nil
 }
 
 func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summary, initialized bool) ([]notificationEvent, []checkpoint, []checkpoint, error) {
@@ -49,20 +56,20 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 
 	events := make([]notificationEvent, 0)
 	before := make([]checkpoint, 0)
-	after := make([]checkpoint, 0, len(summary.Components)+len(pending))
+	baseline := make([]checkpoint, 0, len(summary.Components))
 
 	for _, pendingEvent := range pending {
 		pendingEvent := pendingEvent
 		component := pendingComponent(pendingEvent)
 		events = append(events, notificationEvent{
-			eventType:     redisstore.SubscriptionTypeComponent,
+			eventType:     mongostore.SubscriptionTypeComponent,
 			componentID:   pendingEvent.ComponentID,
 			componentName: pendingEvent.ComponentName,
 			deliveryKey:   pendingEvent.DeliveryKey,
 			sortTime:      pendingEvent.UpdatedAt,
 			text:          FormatComponentChange(component, pendingEvent.PreviousStatus, duplicates[component.Name]),
+			checkpoints:   r.resolveComponentCheckpoints(pendingEvent.ComponentID, pendingEvent.Status, pendingEvent.DeliveryKey),
 		})
-		after = append(after, r.resolveComponentCheckpoints(pendingEvent.ComponentID, pendingEvent.Status, pendingEvent.DeliveryKey)...)
 	}
 
 	for _, component := range summary.Components {
@@ -75,14 +82,10 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 		}
 
 		previousStatus, found := knownStatuses[component.ID]
-		if !initialized {
-			after = append(after, func(ctx context.Context) error {
-				return r.store.SaveComponentStatus(ctx, component.ID, component.Status)
-			})
-			continue
-		}
-		if found && previousStatus == component.Status {
-			after = append(after, func(ctx context.Context) error {
+		if !initialized || (found && previousStatus == component.Status) {
+			// Seeding or no change: persist the current status unconditionally,
+			// no notification.
+			baseline = append(baseline, func(ctx context.Context) error {
 				return r.store.SaveComponentStatus(ctx, component.ID, component.Status)
 			})
 			continue
@@ -92,7 +95,7 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 		}
 
 		deliveryKey := fmt.Sprintf("component:%s:%s:%s", component.ID, component.Status, component.UpdatedAt)
-		pendingEvent := redisstore.PendingComponentEvent{
+		pendingEvent := mongostore.PendingComponentEvent{
 			ComponentID:    component.ID,
 			ComponentName:  component.Name,
 			Status:         component.Status,
@@ -105,16 +108,16 @@ func (r *Runner) collectComponentEvents(ctx context.Context, summary openai.Summ
 			return r.store.SavePendingComponentEvent(ctx, pendingEvent)
 		})
 		events = append(events, notificationEvent{
-			eventType:     redisstore.SubscriptionTypeComponent,
+			eventType:     mongostore.SubscriptionTypeComponent,
 			componentID:   component.ID,
 			componentName: component.Name,
 			deliveryKey:   deliveryKey,
 			sortTime:      component.UpdatedAt,
 			text:          FormatComponentChange(component, previousStatus, duplicates[component.Name]),
+			checkpoints:   r.resolveComponentCheckpoints(component.ID, component.Status, deliveryKey),
 		})
-		after = append(after, r.resolveComponentCheckpoints(component.ID, component.Status, deliveryKey)...)
 	}
-	return events, before, after, nil
+	return events, before, baseline, nil
 }
 
 // resolveComponentCheckpoints builds the post-delivery writes shared by pending
@@ -130,7 +133,7 @@ func (r *Runner) resolveComponentCheckpoints(componentID, status, deliveryKey st
 
 func (r *Runner) collectIncidentEvents(ctx context.Context, response openai.IncidentsResponse, initialized bool) ([]notificationEvent, []checkpoint, error) {
 	events := make([]notificationEvent, 0)
-	checkpoints := make([]checkpoint, 0)
+	baseline := make([]checkpoint, 0)
 	for _, incident := range response.Incidents {
 		incident := incident
 		for _, update := range incident.IncidentUpdates {
@@ -143,29 +146,34 @@ func (r *Runner) collectIncidentEvents(ctx context.Context, response openai.Inci
 			if err != nil {
 				return nil, nil, err
 			}
-			if !seen {
-				checkpoints = append(checkpoints, func(ctx context.Context) error {
-					return r.store.MarkIncidentUpdateVersion(ctx, update.ID, version)
-				})
+			if seen {
+				continue
+			}
+			markVersion := func(ctx context.Context) error {
+				return r.store.MarkIncidentUpdateVersion(ctx, update.ID, version)
+			}
+			if !initialized {
+				// Seeding: record the version baseline without notifying.
+				baseline = append(baseline, markVersion)
+				continue
 			}
 			deliveryKey := fmt.Sprintf("incident:%s:%s", update.ID, version)
-			if initialized && !seen {
-				events = append(events, notificationEvent{
-					eventType:   redisstore.SubscriptionTypeIncident,
-					deliveryKey: deliveryKey,
-					sortTime:    incidentUpdateSortTime(update),
-					text:        FormatIncidentUpdate(incident, update),
-				})
-				checkpoints = append(checkpoints, func(ctx context.Context) error {
-					return r.store.ClearDelivery(ctx, deliveryKey)
-				})
-			}
+			events = append(events, notificationEvent{
+				eventType:   mongostore.SubscriptionTypeIncident,
+				deliveryKey: deliveryKey,
+				sortTime:    incidentUpdateSortTime(update),
+				text:        FormatIncidentUpdate(incident, update),
+				checkpoints: []checkpoint{
+					markVersion,
+					func(ctx context.Context) error { return r.store.ClearDelivery(ctx, deliveryKey) },
+				},
+			})
 		}
 	}
-	return events, checkpoints, nil
+	return events, baseline, nil
 }
 
-func pendingComponent(event redisstore.PendingComponentEvent) openai.Component {
+func pendingComponent(event mongostore.PendingComponentEvent) openai.Component {
 	return openai.Component{
 		ID:        event.ComponentID,
 		Name:      event.ComponentName,
@@ -175,7 +183,7 @@ func pendingComponent(event redisstore.PendingComponentEvent) openai.Component {
 	}
 }
 
-func componentsForDuplicateLabels(components []openai.Component, pending map[string]redisstore.PendingComponentEvent) []openai.Component {
+func componentsForDuplicateLabels(components []openai.Component, pending map[string]mongostore.PendingComponentEvent) []openai.Component {
 	result := make([]openai.Component, 0, len(components)+len(pending))
 	seen := map[string]bool{}
 	add := func(component openai.Component) {

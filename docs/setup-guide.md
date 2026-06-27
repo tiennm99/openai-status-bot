@@ -2,48 +2,46 @@
 
 ## Prerequisites
 
-- Go 1.24+
-- Redis 7+
+- Go 1.25+
+- MongoDB Atlas cluster (managed, no local MongoDB service required)
 - Telegram bot token from BotFather
 
-## Local Docker Run
+## Development Docker Run
 
 ```bash
 cp .env.example .env
 # set TELEGRAM_BOT_TOKEN in .env
-# REDIS_URL is overridden to redis://redis:6379/0 by docker compose
-docker compose up --build
+# set MONGODB_URI to your MongoDB Atlas connection string
+# docker compose sets MONGODB_DATABASE=development for local development
+docker compose -f compose.dev.yaml up --build
 ```
 
-The bundled Redis service is for local development and binds to `127.0.0.1:6379` on the host.
+The Docker Compose service connects to MongoDB Atlas; there is no bundled local MongoDB. Ensure `MONGODB_URI` is set in `.env`.
 
-## Bot-Only Docker Run
+## Production Docker Run
 
-Use this when Redis is hosted outside Docker Compose:
+Use this for production deployment:
 
 ```bash
 cp .env.example .env
 # set TELEGRAM_BOT_TOKEN in .env
-# set REDIS_URL to the external Redis URL, not localhost
-docker compose -f docker-compose.bot.yml up -d --build
+# set MONGODB_URI to your MongoDB Atlas connection string
+# MONGODB_DATABASE defaults to openai_status_bot (production)
+docker compose up -d --build
 ```
 
 ## Local Go Run
 
-Start Redis:
-
-```bash
-docker run --rm -p 127.0.0.1:6379:6379 redis:7-alpine
-```
-
-Run bot:
-
 ```bash
 cp .env.example .env
+# set TELEGRAM_BOT_TOKEN in .env
+# set MONGODB_URI to your MongoDB Atlas connection string
 # export TELEGRAM_BOT_TOKEN or source .env with your shell workflow
-# REDIS_URL defaults to redis://localhost:6379/0
+# MONGODB_DATABASE defaults to openai_status_bot
 go run ./cmd/openai-status-bot
 ```
+
+MongoDB Atlas connection is required; there is no local MongoDB fallback.
 
 ## Verification
 

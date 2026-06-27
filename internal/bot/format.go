@@ -144,13 +144,44 @@ func parseHistoryCount(fields []string) int {
 	return count
 }
 
+const (
+	telegramMessageLimit = 3900
+	truncationNotice     = "\n\n<i>… truncated</i>"
+)
+
+// truncateMessage trims an HTML-formatted message to Telegram's length limit.
+// Every formatter assembles messages from newline-delimited fragments whose
+// HTML tags are individually balanced, so cutting on a newline boundary keeps
+// the markup valid. A naive mid-string cut could split a tag (<co|de>) or an
+// entity (&am|p;), or drop a closing tag, making Telegram reject the entire
+// message with "can't parse entities".
 func truncateMessage(value string) string {
-	const telegramLimit = 3900
 	runes := []rune(value)
-	if len(runes) <= telegramLimit {
+	if len(runes) <= telegramMessageLimit {
 		return value
 	}
-	return strings.TrimSpace(string(runes[:telegramLimit-3])) + "..."
+	budget := telegramMessageLimit - len([]rune(truncationNotice))
+	truncated := string(runes[:budget])
+	if idx := strings.LastIndexByte(truncated, '\n'); idx >= 0 {
+		truncated = truncated[:idx]
+	} else {
+		truncated = dropPartialMarkup(truncated)
+	}
+	return strings.TrimRight(truncated, "\n ") + truncationNotice
+}
+
+// dropPartialMarkup removes a trailing incomplete HTML tag or entity left by a
+// hard cut, so the result never ends inside "<...>" or "&...;". Only reached
+// for a single fragment longer than the whole limit, which the formatters do
+// not produce in practice.
+func dropPartialMarkup(s string) string {
+	if lt := strings.LastIndexByte(s, '<'); lt > strings.LastIndexByte(s, '>') {
+		s = s[:lt]
+	}
+	if amp := strings.LastIndexByte(s, '&'); amp > strings.LastIndexByte(s, ';') {
+		s = s[:amp]
+	}
+	return s
 }
 
 func formatDate(value string) string {

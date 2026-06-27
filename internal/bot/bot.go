@@ -2,18 +2,16 @@ package bot
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
+	tgbot "github.com/go-telegram/bot"
+	tgmodels "github.com/go-telegram/bot/models"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
-	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
 
-type TelegramClient interface {
-	GetUpdates(ctx context.Context, offset int64, timeoutSeconds int) ([]telegram.Update, error)
+type ReplySender interface {
 	SendText(ctx context.Context, chatID int64, threadID *int, text string) error
 }
 
@@ -23,76 +21,79 @@ type StatusClient interface {
 }
 
 type Store interface {
-	AddSubscriber(ctx context.Context, sub redisstore.Subscriber) error
-	GetSubscriber(ctx context.Context, sub redisstore.Subscriber) (redisstore.Subscriber, bool, error)
-	RemoveSubscriber(ctx context.Context, sub redisstore.Subscriber) error
+	AddSubscriber(ctx context.Context, sub mongostore.Subscriber) error
+	GetSubscriber(ctx context.Context, sub mongostore.Subscriber) (mongostore.Subscriber, bool, error)
+	RemoveSubscriber(ctx context.Context, sub mongostore.Subscriber) error
 	SaveTelegramOffset(ctx context.Context, offset int64) error
-	TelegramOffset(ctx context.Context) (int64, error)
-	UpdateSubscriberSettings(ctx context.Context, sub redisstore.Subscriber, types, components []string) (bool, error)
-	UpdateSubscriberTypes(ctx context.Context, sub redisstore.Subscriber, types []string) (bool, error)
+	UpdateSubscriberSettings(ctx context.Context, sub mongostore.Subscriber, types, components []string) (bool, error)
+	UpdateSubscriberTypes(ctx context.Context, sub mongostore.Subscriber, types []string) (bool, error)
 }
 
-type Bot struct {
-	telegramClient TelegramClient
-	statusClient   StatusClient
-	store          Store
-	logger         *slog.Logger
-	username       string
+type App struct {
+	sender       ReplySender
+	statusClient StatusClient
+	store        Store
+	logger       *slog.Logger
+	username     string
 }
 
-func New(telegramClient TelegramClient, statusClient StatusClient, store Store, logger *slog.Logger, username string) *Bot {
-	return &Bot{
-		telegramClient: telegramClient,
-		statusClient:   statusClient,
-		store:          store,
-		logger:         logger,
-		username:       username,
+type MessageContext struct {
+	ChatID   int64
+	ThreadID *int
+	Text     string
+}
+
+func New(sender ReplySender, statusClient StatusClient, store Store, logger *slog.Logger, username string) *App {
+	return &App{
+		sender:       sender,
+		statusClient: statusClient,
+		store:        store,
+		logger:       logger,
+		username:     username,
 	}
 }
 
-func (b *Bot) Run(ctx context.Context) error {
-	offset, err := b.store.TelegramOffset(ctx)
-	if err != nil {
-		return fmt.Errorf("load telegram offset: %w", err)
+func (b *App) RegisterHandlers(telegramBot *tgbot.Bot) {
+	telegramBot.RegisterHandlerMatchFunc(hasMessage, b.HandleUpdate)
+}
+
+func hasMessage(update *tgmodels.Update) bool {
+	return update != nil && update.Message != nil
+}
+
+func (b *App) HandleUpdate(ctx context.Context, _ *tgbot.Bot, update *tgmodels.Update) {
+	message, ok := messageContextFromUpdate(update)
+	if !ok {
+		return
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
+	b.handleMessage(ctx, message)
 
-		updates, err := b.telegramClient.GetUpdates(ctx, offset, 50)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			b.logger.Warn("get telegram updates", "error", err)
-			select {
-			case <-ctx.Done():
-				return nil
-			case <-time.After(3 * time.Second):
-			}
-			continue
-		}
-
-		for _, update := range updates {
-			if update.UpdateID < offset {
-				continue
-			}
-			if update.Message != nil {
-				b.handleMessage(ctx, *update.Message)
-			}
-			offset = update.UpdateID + 1
-			if err := b.store.SaveTelegramOffset(ctx, offset); err != nil {
-				b.logger.Warn("save telegram offset", "offset", offset, "error", err)
-			}
-		}
+	if err := b.store.SaveTelegramOffset(ctx, update.ID+1); err != nil {
+		b.logger.Warn("save telegram offset", "offset", update.ID+1, "error", err)
 	}
 }
 
-func (b *Bot) handleMessage(ctx context.Context, message telegram.Message) {
+func messageContextFromUpdate(update *tgmodels.Update) (MessageContext, bool) {
+	if update == nil || update.Message == nil {
+		return MessageContext{}, false
+	}
+
+	message := update.Message
+	var threadID *int
+	if message.MessageThreadID != 0 {
+		id := message.MessageThreadID
+		threadID = &id
+	}
+
+	return MessageContext{
+		ChatID:   message.Chat.ID,
+		ThreadID: threadID,
+		Text:     message.Text,
+	}, true
+}
+
+func (b *App) handleMessage(ctx context.Context, message MessageContext) {
 	if !strings.HasPrefix(strings.TrimSpace(message.Text), "/") {
 		return
 	}
@@ -124,8 +125,8 @@ func (b *Bot) handleMessage(ctx context.Context, message telegram.Message) {
 	}
 }
 
-func (b *Bot) subscribe(ctx context.Context, message telegram.Message) {
-	sub := redisstore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
+func (b *App) subscribe(ctx context.Context, message MessageContext) {
+	sub := mongostore.NewSubscriber(message.ChatID, message.ThreadID)
 	if err := b.store.AddSubscriber(ctx, sub); err != nil {
 		b.logger.Error("subscribe", "error", err)
 		b.reply(ctx, message, "Could not subscribe right now.")
@@ -134,8 +135,8 @@ func (b *Bot) subscribe(ctx context.Context, message telegram.Message) {
 	b.reply(ctx, message, "Subscribed to OpenAI status updates. Use /subscribe to change preferences.")
 }
 
-func (b *Bot) unsubscribe(ctx context.Context, message telegram.Message) {
-	sub := redisstore.NewSubscriber(message.Chat.ID, message.MessageThreadID)
+func (b *App) unsubscribe(ctx context.Context, message MessageContext) {
+	sub := mongostore.NewSubscriber(message.ChatID, message.ThreadID)
 	if err := b.store.RemoveSubscriber(ctx, sub); err != nil {
 		b.logger.Error("unsubscribe", "error", err)
 		b.reply(ctx, message, "Could not unsubscribe right now.")

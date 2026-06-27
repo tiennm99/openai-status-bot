@@ -9,7 +9,7 @@ import (
 	"time"
 
 	openai "github.com/tiennm99/openai-status-bot/internal/openai"
-	"github.com/tiennm99/openai-status-bot/internal/redisstore"
+	"github.com/tiennm99/openai-status-bot/internal/mongostore"
 	"github.com/tiennm99/openai-status-bot/internal/telegram"
 )
 
@@ -30,14 +30,14 @@ type fakePollerStore struct {
 	initialized       bool
 	componentStatuses map[string]string
 	incidentVersions  map[string]string
-	subscribers       []redisstore.Subscriber
+	subscribers       []mongostore.Subscriber
 	delivered         map[string]map[string]bool
 	hasDeliveredErr   error
 	markDeliveredErr  error
 	removeErr         error
 	savedComponents   map[string]string
 	markedVersions    map[string]string
-	pendingComponents map[string]redisstore.PendingComponentEvent
+	pendingComponents map[string]mongostore.PendingComponentEvent
 	removed           []string
 }
 
@@ -48,7 +48,7 @@ func newFakePollerStore() *fakePollerStore {
 		delivered:         map[string]map[string]bool{},
 		savedComponents:   map[string]string{},
 		markedVersions:    map[string]string{},
-		pendingComponents: map[string]redisstore.PendingComponentEvent{},
+		pendingComponents: map[string]mongostore.PendingComponentEvent{},
 	}
 }
 
@@ -77,7 +77,7 @@ func (f *fakePollerStore) IsInitialized(context.Context) (bool, error) {
 	return f.initialized, nil
 }
 
-func (f *fakePollerStore) ListSubscribers(context.Context) ([]redisstore.Subscriber, error) {
+func (f *fakePollerStore) ListSubscribers(context.Context) ([]mongostore.Subscriber, error) {
 	return f.subscribers, nil
 }
 
@@ -98,15 +98,15 @@ func (f *fakePollerStore) MarkIncidentUpdateVersion(_ context.Context, updateID,
 	return nil
 }
 
-func (f *fakePollerStore) PendingComponentEvents(context.Context) (map[string]redisstore.PendingComponentEvent, error) {
-	result := make(map[string]redisstore.PendingComponentEvent, len(f.pendingComponents))
+func (f *fakePollerStore) PendingComponentEvents(context.Context) (map[string]mongostore.PendingComponentEvent, error) {
+	result := make(map[string]mongostore.PendingComponentEvent, len(f.pendingComponents))
 	for key, value := range f.pendingComponents {
 		result[key] = value
 	}
 	return result, nil
 }
 
-func (f *fakePollerStore) SavePendingComponentEvent(_ context.Context, event redisstore.PendingComponentEvent) error {
+func (f *fakePollerStore) SavePendingComponentEvent(_ context.Context, event mongostore.PendingComponentEvent) error {
 	f.pendingComponents[event.ComponentID] = event
 	return nil
 }
@@ -116,7 +116,7 @@ func (f *fakePollerStore) RemovePendingComponentEvent(_ context.Context, compone
 	return nil
 }
 
-func (f *fakePollerStore) RemoveSubscriber(_ context.Context, sub redisstore.Subscriber) error {
+func (f *fakePollerStore) RemoveSubscriber(_ context.Context, sub mongostore.Subscriber) error {
 	if f.removeErr != nil {
 		return f.removeErr
 	}
@@ -142,7 +142,7 @@ type fakeNotifier struct {
 	messages   []string
 }
 
-func (f *fakeNotifier) SendMessage(_ context.Context, sub redisstore.Subscriber, text string) error {
+func (f *fakeNotifier) SendMessage(_ context.Context, sub mongostore.Subscriber, text string) error {
 	f.sends = append(f.sends, sub.Key())
 	f.messages = append(f.messages, text)
 	if queued := f.errorQueue[sub.Key()]; len(queued) > 0 {
@@ -160,7 +160,7 @@ func TestCheckOnceDoesNotCheckpointWhenSendFails(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
 	notifier := &fakeNotifier{errors: map[string]error{"1": errors.New("network")}}
 	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
 
@@ -176,7 +176,7 @@ func TestCheckOnceSkipsAlreadyDeliveredSubscriberOnRetry(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil), redisstore.NewSubscriber(2, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil), mongostore.NewSubscriber(2, nil)}
 	notifier := &fakeNotifier{errors: map[string]error{"2": errors.New("rate limit")}}
 	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
 
@@ -204,7 +204,7 @@ func TestCheckOnceContinuesFanOutAfterRetryableSendFailures(t *testing.T) {
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
 	store.componentStatuses["c2"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil), redisstore.NewSubscriber(2, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil), mongostore.NewSubscriber(2, nil)}
 	notifier := &fakeNotifier{errors: map[string]error{"1": errors.New("rate limit")}}
 	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
 		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
@@ -227,15 +227,15 @@ func TestCheckOnceStopsOnDeliveryStateReadError(t *testing.T) {
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
 	store.componentStatuses["c2"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
-	store.hasDeliveredErr = errors.New("redis read failed")
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
+	store.hasDeliveredErr = errors.New("store read failed")
 	notifier := &fakeNotifier{}
 	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
 		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
 		{ID: "c2", Name: "ChatGPT", Status: "partial_outage", UpdatedAt: "2026-01-01T00:01:00Z"},
 	}}}, store, notifier, time.Minute, slog.Default())
 
-	if err := runner.CheckOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "redis read failed") {
+	if err := runner.CheckOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "store read failed") {
 		t.Fatalf("CheckOnce error = %v, want delivery state read error", err)
 	}
 	if len(notifier.sends) != 0 {
@@ -248,15 +248,15 @@ func TestCheckOnceStopsWhenTerminalSubscriberRemovalFails(t *testing.T) {
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
 	store.componentStatuses["c2"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
-	store.removeErr = errors.New("redis remove failed")
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
+	store.removeErr = errors.New("store remove failed")
 	notifier := &fakeNotifier{errors: map[string]error{"1": &telegram.APIError{StatusCode: 200, ErrorCode: 403, Description: "Forbidden: bot was blocked by the user"}}}
 	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
 		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
 		{ID: "c2", Name: "ChatGPT", Status: "partial_outage", UpdatedAt: "2026-01-01T00:01:00Z"},
 	}}}, store, notifier, time.Minute, slog.Default())
 
-	if err := runner.CheckOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "redis remove failed") {
+	if err := runner.CheckOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "store remove failed") {
 		t.Fatalf("CheckOnce error = %v, want subscriber remove error", err)
 	}
 	if got, want := notifier.sends, []string{"1"}; !equalStrings(got, want) {
@@ -269,7 +269,7 @@ func TestCheckOnceSkipsLaterEventsForSubscriberAfterRetryableFailure(t *testing.
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
 	store.componentStatuses["c2"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil), redisstore.NewSubscriber(2, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil), mongostore.NewSubscriber(2, nil)}
 	notifier := &fakeNotifier{errorQueue: map[string][]error{"1": {errors.New("rate limit")}}}
 	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
 		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
@@ -288,7 +288,7 @@ func TestCheckOnceRemovesTerminalSubscriberAndCheckpoints(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil), redisstore.NewSubscriber(2, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil), mongostore.NewSubscriber(2, nil)}
 	notifier := &fakeNotifier{errors: map[string]error{"2": &telegram.APIError{StatusCode: 200, ErrorCode: 403, Description: "Forbidden: bot was blocked by the user"}}}
 	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
 
@@ -308,7 +308,7 @@ func TestIncidentUpdateVersionEditSendsAgain(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true
 	store.incidentVersions["u1"] = IncidentUpdateVersion(update)
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
 	updated := openai.IncidentUpdate{ID: "u1", Body: "new", UpdatedAt: "2026-01-01T00:01:00Z"}
 	notifier := &fakeNotifier{}
 	runner := NewRunner(fakeStatusClient{incidents: openai.IncidentsResponse{Incidents: []openai.Incident{{ID: "i1", Name: "incident", Impact: "minor", IncidentUpdates: []openai.IncidentUpdate{updated}}}}}, store, notifier, time.Minute, slog.Default())
@@ -328,7 +328,7 @@ func TestPendingComponentEventSurvivesReturnToPreviousStatus(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil), redisstore.NewSubscriber(2, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil), mongostore.NewSubscriber(2, nil)}
 	notifier := &fakeNotifier{errors: map[string]error{"2": errors.New("rate limit")}}
 	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
 
@@ -371,7 +371,7 @@ func TestPendingComponentLabelDoesNotCountCurrentComponentAsDuplicate(t *testing
 	store := newFakePollerStore()
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
-	store.pendingComponents["c1"] = redisstore.PendingComponentEvent{
+	store.pendingComponents["c1"] = mongostore.PendingComponentEvent{
 		ComponentID:    "c1",
 		ComponentName:  "API",
 		Status:         "degraded_performance",
@@ -379,7 +379,7 @@ func TestPendingComponentLabelDoesNotCountCurrentComponentAsDuplicate(t *testing
 		PreviousStatus: "operational",
 		DeliveryKey:    "component:c1:degraded_performance:2026-01-01T00:00:00Z",
 	}
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
 	notifier := &fakeNotifier{}
 	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
 
@@ -395,7 +395,7 @@ func TestPendingComponentLabelDoesNotCountCurrentComponentAsDuplicate(t *testing
 }
 
 func TestPendingComponentDuplicateLabelsIncludeCurrentRename(t *testing.T) {
-	pending := map[string]redisstore.PendingComponentEvent{
+	pending := map[string]mongostore.PendingComponentEvent{
 		"c1": {
 			ComponentID:   "c1",
 			ComponentName: "Old API",
@@ -416,12 +416,45 @@ func TestPendingComponentDuplicateLabelsIncludeCurrentRename(t *testing.T) {
 	}
 }
 
+func TestCheckOnceCheckpointsDeliveredEventWhenSiblingEventFails(t *testing.T) {
+	// Regression: a fully-delivered event must checkpoint even when another
+	// event in the same poll fails to deliver. Previously any delivery failure
+	// aborted checkpoints for the whole batch, re-emitting delivered events.
+	store := newFakePollerStore()
+	store.initialized = true
+	store.componentStatuses["c1"] = "operational"
+	store.componentStatuses["c2"] = "operational"
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
+	// c1 (sorts first) succeeds; c2 fails for the same subscriber.
+	notifier := &fakeNotifier{errorQueue: map[string][]error{"1": {nil, errors.New("rate limit")}}}
+	runner := NewRunner(fakeStatusClient{summary: openai.Summary{Components: []openai.Component{
+		{ID: "c1", Name: "API", Status: "degraded_performance", UpdatedAt: "2026-01-01T00:00:00Z"},
+		{ID: "c2", Name: "ChatGPT", Status: "partial_outage", UpdatedAt: "2026-01-01T00:01:00Z"},
+	}}}, store, notifier, time.Minute, slog.Default())
+
+	if err := runner.CheckOnce(context.Background()); err == nil {
+		t.Fatal("expected delivery error from c2")
+	}
+	if got := store.savedComponents["c1"]; got != "degraded_performance" {
+		t.Fatalf("c1 checkpoint = %q, want delivered event checkpointed", got)
+	}
+	if got, ok := store.savedComponents["c2"]; ok {
+		t.Fatalf("c2 checkpoint = %q, want failed event NOT checkpointed", got)
+	}
+	if _, ok := store.pendingComponents["c2"]; !ok {
+		t.Fatal("c2 pending marker should persist for retry")
+	}
+	if _, ok := store.pendingComponents["c1"]; ok {
+		t.Fatal("c1 pending marker should be cleared after delivery")
+	}
+}
+
 func TestCheckOnceContinuesWhenMarkDeliveredFailsAfterSend(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true
 	store.componentStatuses["c1"] = "operational"
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
-	store.markDeliveredErr = errors.New("redis write failed")
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
+	store.markDeliveredErr = errors.New("store write failed")
 	notifier := &fakeNotifier{}
 	runner := NewRunner(fakeStatusClient{summary: summaryWithComponent("c1", "API", "degraded_performance")}, store, notifier, time.Minute, slog.Default())
 
@@ -451,7 +484,7 @@ func TestCheckOnceDoesNotRemarkSeenIncidentVersion(t *testing.T) {
 	store := newFakePollerStore()
 	store.initialized = true
 	store.incidentVersions["u1"] = IncidentUpdateVersion(update)
-	store.subscribers = []redisstore.Subscriber{redisstore.NewSubscriber(1, nil)}
+	store.subscribers = []mongostore.Subscriber{mongostore.NewSubscriber(1, nil)}
 	notifier := &fakeNotifier{}
 	runner := NewRunner(fakeStatusClient{incidents: openai.IncidentsResponse{Incidents: []openai.Incident{{ID: "i1", Name: "incident", Impact: "minor", IncidentUpdates: []openai.IncidentUpdate{update}}}}}, store, notifier, time.Minute, slog.Default())
 
