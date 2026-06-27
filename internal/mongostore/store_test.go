@@ -33,7 +33,7 @@ func testMongo(t *testing.T) *Store {
 	ctx := context.Background()
 
 	sharedClientOnce.Do(func() {
-		container, err := tcmongo.Run(ctx, "mongo:7")
+		container, err := tcmongo.Run(ctx, "mongo:8")
 		if err != nil {
 			sharedClientErr = err
 			return
